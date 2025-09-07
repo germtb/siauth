@@ -5,7 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"log"
+	"net/http"
 	"time"
 
 	"github.com/germtb/sidb"
@@ -318,33 +321,6 @@ func (auth *Auth) DeleteUser(username string) error {
 	return err
 }
 
-/////////////////////
-// High level APIs //
-/////////////////////
-
-func (auth *Auth) Signup(params CreateUserParams) (*Token, error) {
-	err := auth.CreateUser(params)
-	if err != nil {
-		return nil, err
-	}
-	return auth.GenerateToken(params.Username)
-}
-
-func (auth *Auth) Login(username, password string) (*Token, error) {
-	valid, err := auth.ValidatePassword(username, password)
-	if err != nil {
-		return nil, err
-	}
-	if !valid {
-		return nil, ErrInvalidCredentials
-	}
-	return auth.GenerateToken(username)
-}
-
-func (auth *Auth) Logout(username string) error {
-	return auth.RevokeToken(username)
-}
-
 func (auth *Auth) ChangePassword(username, oldPassword, newPassword string) error {
 	valid, err := auth.ValidatePassword(username, oldPassword)
 	if err != nil {
@@ -355,6 +331,82 @@ func (auth *Auth) ChangePassword(username, oldPassword, newPassword string) erro
 	}
 
 	return auth.ResetPassword(username, newPassword)
+}
+
+func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
+	// First, check if the user exists.
+	user, err := auth.db.GetByKey(username, USER_TYPE)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrUserNotFound
+	}
+
+	value, err := generateRandomToken()
+	if err != nil {
+		return nil, err
+	}
+
+	duration := 15 * time.Minute
+	token := &Token{
+		Value:    value,
+		Username: username,
+		Expiry:   time.Now().Add(duration).UnixMilli(),
+	}
+
+	serializedToken, err := proto.Marshal(token)
+	if err != nil {
+		return nil, err
+	}
+
+	resetKey := username + "-reset"
+	_, err = auth.db.Put(sidb.EntryInput{
+		Key:   resetKey,
+		Value: serializedToken,
+		Type:  TOKEN_TYPE,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+func (auth *Auth) ResetPasswordWithToken(username, tokenValue, newPassword string) error {
+	resetKey := username + "-reset"
+	entry, err := auth.db.GetByKey(resetKey, TOKEN_TYPE)
+	if err != nil {
+		return err
+	}
+	if entry == nil {
+		return ErrMissingToken
+	}
+
+	var storedToken Token
+	err = proto.Unmarshal(entry.Value, &storedToken)
+	if err != nil {
+		return err
+	}
+
+	if storedToken.Value != tokenValue {
+		return ErrInvalidToken
+	}
+
+	if time.Now().UnixMilli() > storedToken.Expiry {
+		return ErrExpiredToken
+	}
+
+	err = auth.ResetPassword(username, newPassword)
+	if err != nil {
+		return err
+	}
+
+	err = auth.db.DeleteByKey(resetKey, TOKEN_TYPE)
+	if err != nil {
+		// Log this error, but don't return it to the user, as the password change was successful.
+		log.Printf("Failed to delete password reset token for %s: %v", username, err)
+	}
+	return nil
 }
 
 func (auth *Auth) ResetPassword(username, newPassword string) error {
@@ -388,4 +440,134 @@ func (auth *Auth) ResetPassword(username, newPassword string) error {
 		Value: updated,
 		Type:  USER_TYPE,
 	})
+}
+
+/////////////////////
+// High level APIs //
+/////////////////////
+
+func InitHandlers(mux *http.ServeMux, auth *Auth) {
+	mux.Handle("POST /signup", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var params CreateUserParams
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		err := auth.CreateUser(params)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		token, err := auth.GenerateToken(params.Username)
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(token)
+	}))
+
+	mux.Handle("POST /login", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var params struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		valid, err := auth.ValidatePassword(params.Username, params.Password)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !valid {
+			http.Error(w, ErrInvalidCredentials.Error(), http.StatusUnauthorized)
+			return
+		}
+		token, err := auth.GenerateToken(params.Username)
+		if err != nil {
+			if errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrUserNotFound) {
+				http.Error(w, err.Error(), http.StatusUnauthorized)
+			} else {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+
+		json.NewEncoder(w).Encode(token)
+	}))
+
+	mux.Handle("POST /logout", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var params struct {
+			Username string `json:"username"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		err := auth.RevokeToken(params.Username)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	mux.Handle("POST /change_password", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var params struct {
+			Username    string `json:"username"`
+			OldPassword string `json:"old_password"`
+			NewPassword string `json:"new_password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		valid, err := auth.ValidatePassword(params.Username, params.OldPassword)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !valid {
+			http.Error(w, ErrInvalidCredentials.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		err = auth.ChangePassword(params.Username, params.OldPassword, params.NewPassword)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	mux.Handle("POST /reset_password", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var params struct {
+			Username    string `json:"username"`
+			NewPassword string `json:"new_password"`
+			ResetToken  string `json:"reset_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		err := auth.ResetPasswordWithToken(params.Username, params.ResetToken, params.NewPassword)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
 }

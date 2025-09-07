@@ -495,3 +495,93 @@ func TestValidatePasswordNonExistentUser(t *testing.T) {
 		t.Fatal("Expected password validation to fail for non-existent user")
 	}
 }
+
+func TestChangePassword(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_namespace"
+
+	auth, err := Init(pepper, namespace)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer auth.db.Drop()
+
+	err = auth.CreateUser(CreateUserParams{
+		Username: "testuser",
+		Password: "password123",
+	})
+
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+
+	err = auth.ChangePassword("testuser", "password123", "newpassword456")
+	if err != nil {
+		t.Fatalf("ChangePassword failed: %v", err)
+	}
+
+	valid, err := auth.ValidatePassword("testuser", "newpassword456")
+	if err != nil {
+		t.Fatalf("ValidatePassword failed: %v", err)
+	}
+	if !valid {
+		t.Fatal("Expected new password to be valid")
+	}
+
+	// Ensure old password is no longer valid
+	valid, err = auth.ValidatePassword("testuser", "password123")
+	if err != ErrInvalidCredentials {
+		t.Fatalf("Expected ErrInvalidCredentials for old password, got: %v", err)
+	}
+	if valid {
+		t.Fatal("Expected old password to be invalid")
+	}
+}
+
+func TestResetPasswordWithToken(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_namespace"
+
+	auth, err := Init(pepper, namespace)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer auth.db.Drop()
+
+	err = auth.CreateUser(CreateUserParams{
+		Username: "testuser",
+		Password: "password123",
+	})
+
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+
+	// Generate a reset token
+	resetToken, err := auth.GeneratePasswordResetToken("testuser")
+	if err != nil {
+		t.Fatalf("GeneratePasswordResetToken failed: %v", err)
+	}
+
+	err = auth.ResetPasswordWithToken("testuser", resetToken.Value, "newpassword456")
+	if err != nil {
+		t.Fatalf("ResetPasswordWithToken failed: %v", err)
+	}
+
+	valid, err := auth.ValidatePassword("testuser", "newpassword456")
+	if err != nil {
+		t.Fatalf("ValidatePassword failed: %v", err)
+	}
+	if !valid {
+		t.Fatal("Expected new password to be valid")
+	}
+
+	// Ensure old password is no longer valid
+	valid, err = auth.ValidatePassword("testuser", "password123")
+	if err != ErrInvalidCredentials {
+		t.Fatalf("Expected ErrInvalidCredentials for old password, got: %v", err)
+	}
+	if valid {
+		t.Fatal("Expected old password to be invalid")
+	}
+}
