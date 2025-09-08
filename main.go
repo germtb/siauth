@@ -5,10 +5,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"log"
-	"net/http"
 	"time"
 
 	"github.com/germtb/sidb"
@@ -446,128 +444,88 @@ func (auth *Auth) ResetPassword(username, newPassword string) error {
 // High level APIs //
 /////////////////////
 
-func InitHandlers(mux *http.ServeMux, auth *Auth) {
-	mux.Handle("POST /signup", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var params CreateUserParams
-		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+func (auth *Auth) Status(username string, token string) (bool, error) {
+	return auth.ValidateToken(username, token)
+}
 
-		err := auth.CreateUser(params)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+func (auth *Auth) Signup(params CreateUserParams) (*Token, error) {
+	err := auth.CreateUser(params)
 
-		token, err := auth.GenerateToken(params.Username)
+	if err != nil {
+		return nil, err
+	}
 
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	token, err := auth.GenerateToken(params.Username)
 
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(token)
-	}))
+	if err != nil {
+		return nil, err
+	}
 
-	mux.Handle("POST /login", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var params struct {
-			Username string `json:"username"`
-			Password string `json:"password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+	return token, nil
+}
 
-		valid, err := auth.ValidatePassword(params.Username, params.Password)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if !valid {
-			http.Error(w, ErrInvalidCredentials.Error(), http.StatusUnauthorized)
-			return
-		}
-		token, err := auth.GenerateToken(params.Username)
-		if err != nil {
-			if errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrUserNotFound) {
-				http.Error(w, err.Error(), http.StatusUnauthorized)
-			} else {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-			}
-			return
-		}
+func (auth *Auth) Login(username string, password string) (*Token, error) {
+	valid, err := auth.ValidatePassword(username, password)
 
-		json.NewEncoder(w).Encode(token)
-	}))
+	if err != nil {
+		return nil, err
+	}
 
-	mux.Handle("POST /logout", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var params struct {
-			Username string `json:"username"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+	if !valid {
+		return nil, ErrInvalidCredentials
+	}
 
-		err := auth.RevokeToken(params.Username)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	token, err := auth.GenerateToken(username)
 
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	if err != nil {
+		return nil, err
+	}
 
-	mux.Handle("POST /change_password", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var params struct {
-			Username    string `json:"username"`
-			OldPassword string `json:"old_password"`
-			NewPassword string `json:"new_password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+	return token, nil
+}
 
-		valid, err := auth.ValidatePassword(params.Username, params.OldPassword)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if !valid {
-			http.Error(w, ErrInvalidCredentials.Error(), http.StatusUnauthorized)
-			return
-		}
+func (auth *Auth) Logout(username string) error {
+	return auth.RevokeToken(username)
+}
 
-		err = auth.ChangePassword(params.Username, params.OldPassword, params.NewPassword)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+func (auth *Auth) ChangePasswordAndGenerateToken(
+	username string, oldPassword string, newPassword string,
+) (*Token, error) {
+	valid, err := auth.ValidatePassword(username, oldPassword)
 
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	if err != nil {
+		return nil, err
+	}
 
-	mux.Handle("POST /reset_password", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var params struct {
-			Username    string `json:"username"`
-			NewPassword string `json:"new_password"`
-			ResetToken  string `json:"reset_token"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+	if !valid {
+		return nil, ErrInvalidCredentials
+	}
 
-		err := auth.ResetPasswordWithToken(params.Username, params.ResetToken, params.NewPassword)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	err = auth.ResetPassword(username, newPassword)
 
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := auth.GenerateToken(username)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return token, nil
+}
+
+func (auth *Auth) ResetPasswordAndGenerateToken(username string, newPassword string) (*Token, error) {
+	err := auth.ResetPassword(username, newPassword)
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := auth.GenerateToken(username)
+	if err != nil {
+		return nil, err
+	}
+
+	return token, nil
 }

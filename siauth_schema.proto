@@ -13,5 +13,5 @@ message ProtoUser {
 message Token {
   string value = 1;
   string username = 2;
-  int64 expiresAt = 3;
+  int64 expiry = 3;
 }

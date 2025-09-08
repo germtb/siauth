@@ -1,8 +1,5 @@
 #!/bin/bash
 
-rm ./schema.pb.go
-
-protoc --go_out=. --go-grpc_out=. schema.proto;
+protoc --go_out=. --go-grpc_out=. siauth_schema.proto;
 
 PROTO_DIR=.
-
