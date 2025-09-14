@@ -171,10 +171,18 @@ func (auth *Auth) RefreshToken(
 }
 
 func (auth *Auth) RevokeToken(
-	username string,
+	authCode string,
 ) error {
-	err := auth.db.DeleteByKey(username, TOKEN_TYPE)
-	return err
+	token, err := auth.ValidateToken(authCode)
+	if err != nil {
+		return err
+	}
+
+	if token == nil {
+		return ErrInvalidToken
+	}
+
+	return auth.db.DeleteByKey(token.Code, TOKEN_TYPE)
 }
 
 func (auth *Auth) RegenerateToken(

@@ -593,3 +593,62 @@ func TestResetPasswordWithToken(t *testing.T) {
 		t.Fatal("Expected old password to be invalid")
 	}
 }
+
+func TestRevokeToken(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_namespace"
+
+	auth, err := Init(pepper, namespace)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	defer auth.db.Drop()
+
+	err = auth.CreateUser(CreateUserParams{
+		Username: "testuser",
+		Password: "password123",
+	})
+
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+	token, err := auth.GenerateToken("testuser")
+
+	if err != nil {
+		t.Fatalf("GenerateToken failed: %v", err)
+	}
+	if token == nil {
+		t.Fatal("Expected token to be generated")
+	}
+
+	err = auth.RevokeToken(token.Code)
+	if err != nil {
+		t.Fatalf("RevokeToken failed: %v", err)
+	}
+
+	validatedToken, err := auth.ValidateToken(token.Code)
+	if err == nil {
+		t.Fatal("Expected error for revoked token")
+	}
+	if validatedToken != nil {
+		t.Fatal("Expected token to be invalid after revocation")
+	}
+}
+
+func TestRevokeMissingToken(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_namespace"
+
+	auth, err := Init(pepper, namespace)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	defer auth.db.Drop()
+	err = auth.RevokeToken("nonexistenttoken")
+
+	if err != ErrMissingToken {
+		t.Fatalf("Expected ErrMissingToken, got: %v", err)
+	}
+}
