@@ -111,7 +111,7 @@ func TestGenerateToken(t *testing.T) {
 		t.Errorf("Expected username 'testuser', got: %v", token.Username)
 	}
 
-	if token.Value == "" {
+	if token.Code == "" {
 		t.Error("Expected non-empty token string")
 	}
 
@@ -173,14 +173,22 @@ func TestAuthenticateToken(t *testing.T) {
 		t.Fatal("Expected token to be generated")
 	}
 
-	valid, err := auth.ValidateToken("testuser", token.Value)
+	validatedToken, err := auth.ValidateToken(token.Code)
 
 	if err != nil {
 		t.Fatalf("AuthenticateToken failed: %v", err)
 	}
 
-	if !valid {
+	if validatedToken == nil {
 		t.Fatal("Expected token to be valid")
+	}
+
+	if validatedToken.Username != "testuser" {
+		t.Errorf("Expected username 'testuser', got: %v", validatedToken.Username)
+	}
+
+	if validatedToken.Code != token.Code {
+		t.Errorf("Expected token code '%v', got: %v", token.Code, validatedToken.Code)
 	}
 }
 
@@ -213,11 +221,11 @@ func TestAuthenticateTokenInvalid(t *testing.T) {
 		t.Fatal("Expected token to be generated")
 	}
 
-	valid, err := auth.ValidateToken("testuser", "invalidtokenvalue")
+	validatedToken, err := auth.ValidateToken("invalidtokenvalue")
 	if err == nil {
 		t.Fatal("Expected error for invalid token")
 	}
-	if valid {
+	if validatedToken != nil {
 		t.Fatal("Expected token to be invalid")
 	}
 }
@@ -260,7 +268,7 @@ func TestAuthenticateTokenExpired(t *testing.T) {
 	}
 
 	err = auth.db.Update(sidb.EntryInput{
-		Key:   "testuser",
+		Key:   token.Code,
 		Value: serializedToken,
 		Type:  TOKEN_TYPE,
 	})
@@ -268,11 +276,11 @@ func TestAuthenticateTokenExpired(t *testing.T) {
 		t.Fatalf("Failed to update token expiry: %v", err)
 	}
 
-	valid, err := auth.ValidateToken("testuser", token.Value)
+	validatedToken, err := auth.ValidateToken(token.Code)
 	if err == nil {
 		t.Fatal("Expected error for expired token")
 	}
-	if valid {
+	if validatedToken != nil {
 		t.Fatal("Expected token to be expired and invalid")
 	}
 }
@@ -310,13 +318,13 @@ func TestRefreshToken(t *testing.T) {
 
 	time.Sleep(1 * time.Second) // Ensure time has passed for expiry comparison
 
-	err = auth.RefreshToken("testuser", token.Value)
+	err = auth.RefreshToken(token.Code)
 
 	if err != nil {
 		t.Fatalf("RefreshToken failed: %v", err)
 	}
 
-	entry, err := auth.db.GetByKey("testuser", TOKEN_TYPE)
+	entry, err := auth.db.GetByKey(token.Code, TOKEN_TYPE)
 	if err != nil {
 		t.Fatalf("Failed to retrieve token after refresh: %v", err)
 	}
@@ -330,8 +338,8 @@ func TestRefreshToken(t *testing.T) {
 	if refreshedToken.Expiry <= originalExpiry {
 		t.Fatal("Expected token expiry to be extended")
 	}
-	if refreshedToken.Value != token.Value {
-		t.Fatal("Expected token value to remain the same after refresh")
+	if refreshedToken.Code != token.Code {
+		t.Fatal("Expected token code to remain the same after refresh")
 	}
 }
 
@@ -354,7 +362,7 @@ func TestRefreshMissingToken(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 
-	err = auth.RefreshToken("testuser", "invalidtokenvalue")
+	err = auth.RefreshToken("invalidtokenvalue")
 
 	if err != ErrMissingToken {
 		t.Fatalf("Expected ErrMissingToken, got: %v", err)
@@ -390,33 +398,33 @@ func TestRegenerateToken(t *testing.T) {
 		t.Fatal("Expected token to be generated")
 	}
 
-	newToken, err := auth.RegenerateToken("testuser", originalToken.Value)
+	newToken, err := auth.RegenerateToken(originalToken.Code)
 
 	if err != nil {
 		t.Fatalf("RegenerateToken failed: %v", err)
 	}
 
-	if newToken.Value == originalToken.Value {
-		t.Fatal("Expected new token value to be different from original")
+	if newToken.Code == originalToken.Code {
+		t.Fatal("Expected new token code to be different from original")
 	}
 
-	valid, err := auth.ValidateToken("testuser", newToken.Value)
+	validatedToken, err := auth.ValidateToken(newToken.Code)
 
 	if err != nil {
 		t.Fatalf("ValidateToken failed: %v", err)
 	}
 
-	if !valid {
+	if validatedToken == nil {
 		t.Fatal("Expected new token to be valid")
 	}
 
-	valid, err = auth.ValidateToken("testuser", originalToken.Value)
+	invalidToken, err := auth.ValidateToken(originalToken.Code)
 
-	if err != ErrInvalidToken {
-		t.Fatalf("Expected ErrInvalidToken, got: %v", err)
+	if err != ErrMissingToken {
+		t.Fatalf("Expected ErrMissingToken, got: %v", err)
 	}
 
-	if valid {
+	if invalidToken != nil {
 		t.Fatal("Expected original token to be invalid after regeneration")
 	}
 }
@@ -563,7 +571,7 @@ func TestResetPasswordWithToken(t *testing.T) {
 		t.Fatalf("GeneratePasswordResetToken failed: %v", err)
 	}
 
-	err = auth.ResetPasswordWithToken("testuser", resetToken.Value, "newpassword456")
+	err = auth.ResetPasswordWithToken("testuser", resetToken.Code, "newpassword456")
 	if err != nil {
 		t.Fatalf("ResetPasswordWithToken failed: %v", err)
 	}

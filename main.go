@@ -99,7 +99,7 @@ func (auth *Auth) CreateUser(params CreateUserParams) error {
 		return err
 	}
 
-	_, err = auth.db.Put(sidb.EntryInput{
+	_, err = auth.db.Upsert(sidb.EntryInput{
 		Key:   params.Username,
 		Value: encodedProtoUser,
 		Type:  USER_TYPE,
@@ -112,75 +112,57 @@ var ErrMissingToken = errors.New("missing token")
 var ErrExpiredToken = errors.New("expired token")
 
 func (auth *Auth) ValidateToken(
-	username string,
-	token string,
-) (bool, error) {
-	entry, err := auth.db.GetByKey(username, TOKEN_TYPE)
+	authCode string,
+) (*Token, error) {
+	entry, err := auth.db.GetByKey(authCode, TOKEN_TYPE)
 
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
 	if entry == nil {
-		return false, ErrMissingToken
+		return nil, ErrMissingToken
 	}
 
-	var storedToken Token
-	err = proto.Unmarshal(entry.Value, &storedToken)
+	var token Token
+	err = proto.Unmarshal(entry.Value, &token)
 
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
-	if storedToken.Value != token {
-		return false, ErrInvalidToken
+	if time.Now().UnixMilli() > token.Expiry {
+		go auth.db.DeleteByKey(authCode, TOKEN_TYPE)
+		return nil, ErrExpiredToken
 	}
 
-	if time.Now().UnixMilli() > storedToken.Expiry {
-		return false, ErrExpiredToken
-	}
-
-	return true, nil
+	return &token, nil
 }
 
 var ErrInvalidToken = errors.New("invalid token")
 
 func (auth *Auth) RefreshToken(
-	username string,
-	token string,
+	authCode string,
 ) error {
-	valid, err := auth.ValidateToken(username, token)
+	token, err := auth.ValidateToken(authCode)
 	if err != nil {
 		return err
 	}
 
-	if !valid {
+	if token == nil {
 		return ErrInvalidToken
 	}
 
-	var storedToken Token
-	entry, err := auth.db.GetByKey(username, TOKEN_TYPE)
+	token.Expiry = time.Now().Add(24 * time.Hour).UnixMilli()
 
-	if err != nil {
-		return err
-	}
-
-	err = proto.Unmarshal(entry.Value, &storedToken)
-
-	if err != nil {
-		return err
-	}
-
-	storedToken.Expiry = time.Now().Add(24 * time.Hour).UnixMilli()
-
-	serializedToken, err := proto.Marshal(&storedToken)
+	serializedToken, err := proto.Marshal(token)
 
 	if err != nil {
 		return err
 	}
 
 	err = auth.db.Update(sidb.EntryInput{
-		Key:   username,
+		Key:   token.Code,
 		Value: serializedToken,
 		Type:  TOKEN_TYPE,
 	})
@@ -196,26 +178,21 @@ func (auth *Auth) RevokeToken(
 }
 
 func (auth *Auth) RegenerateToken(
-	username string,
-	token string,
+	authCode string,
 ) (*Token, error) {
-	valid, err := auth.ValidateToken(username, token)
+	token, err := auth.ValidateToken(authCode)
 
 	if err != nil {
 		return nil, err
 	}
 
-	if !valid {
-		return nil, ErrInvalidToken
-	}
-
-	err = auth.db.DeleteByKey(username, TOKEN_TYPE)
+	err = auth.db.DeleteByKey(authCode, TOKEN_TYPE)
 
 	if err != nil {
 		return nil, err
 	}
 
-	newToken, err := auth.GenerateToken(username)
+	newToken, err := auth.GenerateToken(token.Username)
 
 	if err != nil {
 		return nil, err
@@ -274,7 +251,7 @@ func (auth *Auth) GenerateToken(
 		return nil, ErrUserNotFound
 	}
 
-	value, err := generateRandomToken()
+	code, err := generateRandomToken()
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +259,7 @@ func (auth *Auth) GenerateToken(
 	duration := 24 * time.Hour
 
 	token := &Token{
-		Value:    value,
+		Code:     code,
 		Username: username,
 		Expiry:   time.Now().Add(duration).UnixMilli(),
 	}
@@ -293,10 +270,10 @@ func (auth *Auth) GenerateToken(
 		return nil, err
 	}
 
-	_, err = auth.db.Put(sidb.EntryInput{
-		Key:   token.Username,
+	_, err = auth.db.Upsert(sidb.EntryInput{
+		Key:   token.Code,
 		Value: serializedToken,
-		Type:  "token",
+		Type:  TOKEN_TYPE,
 	})
 
 	if err != nil {
@@ -341,14 +318,14 @@ func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
 		return nil, ErrUserNotFound
 	}
 
-	value, err := generateRandomToken()
+	code, err := generateRandomToken()
 	if err != nil {
 		return nil, err
 	}
 
 	duration := 15 * time.Minute
 	token := &Token{
-		Value:    value,
+		Code:     code,
 		Username: username,
 		Expiry:   time.Now().Add(duration).UnixMilli(),
 	}
@@ -359,7 +336,7 @@ func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
 	}
 
 	resetKey := username + "-reset"
-	_, err = auth.db.Put(sidb.EntryInput{
+	_, err = auth.db.Upsert(sidb.EntryInput{
 		Key:   resetKey,
 		Value: serializedToken,
 		Type:  TOKEN_TYPE,
@@ -386,7 +363,7 @@ func (auth *Auth) ResetPasswordWithToken(username, tokenValue, newPassword strin
 		return err
 	}
 
-	if storedToken.Value != tokenValue {
+	if storedToken.Code != tokenValue {
 		return ErrInvalidToken
 	}
 
@@ -444,8 +421,32 @@ func (auth *Auth) ResetPassword(username, newPassword string) error {
 // High level APIs //
 /////////////////////
 
-func (auth *Auth) Status(username string, token string) (bool, error) {
-	return auth.ValidateToken(username, token)
+type Status struct {
+	Valid    bool
+	Username string
+	Expiry   int64
+}
+
+func (auth *Auth) Status(authCode string) (*Status, error) {
+	token, err := auth.ValidateToken(authCode)
+
+	if err != nil {
+		if errors.Is(err, ErrMissingToken) || errors.Is(err, ErrExpiredToken) {
+			return &Status{
+				Valid:    false,
+				Username: "",
+				Expiry:   0,
+			}, nil
+		}
+		return nil, err
+	}
+
+	return &Status{
+		Valid:    true,
+		Username: token.Username,
+		Expiry:   token.Expiry,
+	}, nil
+
 }
 
 func (auth *Auth) Signup(params CreateUserParams) (*Token, error) {

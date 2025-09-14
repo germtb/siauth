@@ -11,7 +11,7 @@ message ProtoUser {
 }
 
 message Token {
-  string value = 1;
+  string code = 1;
   string username = 2;
   int64 expiry = 3;
 }
