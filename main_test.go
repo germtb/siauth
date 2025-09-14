@@ -652,3 +652,91 @@ func TestRevokeMissingToken(t *testing.T) {
 		t.Fatalf("Expected ErrMissingToken, got: %v", err)
 	}
 }
+
+func TestGetTokensByUsername(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_namespace"
+
+	auth, err := Init(pepper, namespace)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer auth.db.Drop()
+
+	err = auth.CreateUser(CreateUserParams{
+		Username: "testuser",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+
+	// Generate multiple tokens for the user
+	for i := 0; i < 3; i++ {
+		_, err := auth.GenerateToken("testuser")
+		if err != nil {
+			t.Fatalf("GenerateToken failed: %v", err)
+		}
+	}
+
+	tokens, err := auth.GetTokensByUsername("testuser")
+	if err != nil {
+		t.Fatalf("GetTokensByUsername failed: %v", err)
+	}
+
+	if len(tokens) != 3 {
+		t.Fatalf("Expected 3 tokens, got: %d", len(tokens))
+	}
+	for _, token := range tokens {
+		if token.Username != "testuser" {
+			t.Errorf("Expected token username 'testuser', got: %v", token.Username)
+		}
+	}
+}
+
+func TestGetTokensByUsernameNoTokens(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_namespace"
+
+	auth, err := Init(pepper, namespace)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer auth.db.Drop()
+
+	err = auth.CreateUser(CreateUserParams{
+		Username: "testuser",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+
+	tokens, err := auth.GetTokensByUsername("testuser")
+	if err != nil {
+		t.Fatalf("GetTokensByUsername failed: %v", err)
+	}
+
+	if len(tokens) != 0 {
+		t.Fatalf("Expected 0 tokens, got: %d", len(tokens))
+	}
+}
+
+func TestGetTokensByUsernameNonExistentUser(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_namespace"
+
+	auth, err := Init(pepper, namespace)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer auth.db.Drop()
+
+	tokens, err := auth.GetTokensByUsername("nonexistentuser")
+	if err != nil {
+		t.Fatalf("GetTokensByUsername failed: %v", err)
+	}
+	if len(tokens) != 0 {
+		t.Fatalf("Expected 0 tokens for non-existent user, got: %d", len(tokens))
+	}
+}

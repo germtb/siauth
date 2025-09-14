@@ -100,9 +100,10 @@ func (auth *Auth) CreateUser(params CreateUserParams) error {
 	}
 
 	_, err = auth.db.Upsert(sidb.EntryInput{
-		Key:   params.Username,
-		Value: encodedProtoUser,
-		Type:  USER_TYPE,
+		Key:      params.Username,
+		Value:    encodedProtoUser,
+		Type:     USER_TYPE,
+		Grouping: params.Username,
 	})
 
 	return err
@@ -162,9 +163,10 @@ func (auth *Auth) RefreshToken(
 	}
 
 	err = auth.db.Update(sidb.EntryInput{
-		Key:   token.Code,
-		Value: serializedToken,
-		Type:  TOKEN_TYPE,
+		Key:      token.Code,
+		Value:    serializedToken,
+		Type:     TOKEN_TYPE,
+		Grouping: token.Username,
 	})
 
 	return err
@@ -279,9 +281,10 @@ func (auth *Auth) GenerateToken(
 	}
 
 	_, err = auth.db.Upsert(sidb.EntryInput{
-		Key:   token.Code,
-		Value: serializedToken,
-		Type:  TOKEN_TYPE,
+		Key:      token.Code,
+		Value:    serializedToken,
+		Type:     TOKEN_TYPE,
+		Grouping: username,
 	})
 
 	if err != nil {
@@ -345,9 +348,10 @@ func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
 
 	resetKey := username + "-reset"
 	_, err = auth.db.Upsert(sidb.EntryInput{
-		Key:   resetKey,
-		Value: serializedToken,
-		Type:  TOKEN_TYPE,
+		Key:      resetKey,
+		Value:    serializedToken,
+		Type:     TOKEN_TYPE,
+		Grouping: username,
 	})
 	if err != nil {
 		return nil, err
@@ -419,9 +423,10 @@ func (auth *Auth) ResetPassword(username, newPassword string) error {
 	}
 
 	return auth.db.Update(sidb.EntryInput{
-		Key:   username,
-		Value: updated,
-		Type:  USER_TYPE,
+		Key:      username,
+		Value:    updated,
+		Type:     USER_TYPE,
+		Grouping: username,
 	})
 }
 
@@ -537,4 +542,23 @@ func (auth *Auth) ResetPasswordAndGenerateToken(username string, newPassword str
 	}
 
 	return token, nil
+}
+
+func (auth *Auth) GetTokensByUsername(username string) ([]*Token, error) {
+	entries, err := auth.db.GetByGrouping(username, TOKEN_TYPE)
+	if err != nil {
+		return nil, err
+	}
+
+	tokens := make([]*Token, 0, len(entries))
+	for _, entry := range entries {
+		var token Token
+		err := proto.Unmarshal(entry.Value, &token)
+		if err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, &token)
+	}
+
+	return tokens, nil
 }
