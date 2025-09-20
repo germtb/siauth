@@ -748,3 +748,25 @@ func TestGetTokensByUsernameNonExistentUser(t *testing.T) {
 		t.Fatalf("Expected 0 tokens for non-existent user, got: %d", len(tokens))
 	}
 }
+
+func TestCreateUserWithInvalidName(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_namespace"
+
+	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	params := CreateUserParams{
+		Username: "invalid user!", // Invalid due to space and exclamation mark
+		Password: "password123",
+	}
+
+	err = auth.CreateUser(params)
+	if err != ErrInvalidUsername {
+		t.Fatalf("Expected ErrInvalidUsername, got: %v", err)
+	}
+
+}

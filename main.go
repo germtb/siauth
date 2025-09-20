@@ -90,7 +90,33 @@ func (auth *Auth) GetUserDB(username string) (*sidb.Database, error) {
 	return db, nil
 }
 
+func validateUsername(username string) bool {
+	// Add your username validation logic here.
+	// For example, check length, allowed characters, etc.
+	if len(username) < 3 || len(username) > 30 {
+		return false
+	}
+
+	// only has alphanumeric characters and underscores
+	for _, char := range username {
+		if !(char >= 'a' && char <= 'z') &&
+			!(char >= 'A' && char <= 'Z') &&
+			!(char >= '0' && char <= '9') &&
+			char != '_' {
+			return false
+		}
+	}
+
+	return true
+}
+
+var ErrInvalidUsername = errors.New("invalid username")
+
 func (auth *Auth) CreateUser(params CreateUserParams) error {
+	if !validateUsername(params.Username) {
+		return ErrInvalidUsername
+	}
+
 	db, err := auth.GetUserDB(params.Username)
 
 	if err != nil {
