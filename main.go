@@ -26,23 +26,27 @@ type User struct {
 }
 
 type Auth struct {
-	pepper [32]byte
-	db     *sidb.Database
+	pepper    [32]byte
+	namespace string
+	userDbs   map[string]*sidb.Database
+	tokenDb   *sidb.Database
 }
 
 func Init(
 	pepper [32]byte,
 	namespace string,
 ) (*Auth, error) {
-	db, err := sidb.Init([]string{namespace}, "users")
+	tokenDb, err := sidb.Init([]string{namespace}, "tokens")
 
 	if err != nil {
 		return nil, err
 	}
 
 	return &Auth{
-		pepper: pepper,
-		db:     db,
+		pepper:    pepper,
+		namespace: namespace,
+		userDbs:   map[string]*sidb.Database{},
+		tokenDb:   tokenDb,
 	}, nil
 }
 
@@ -71,8 +75,29 @@ type CreateUserParams struct {
 
 var ErrUserExists = errors.New("user already exists")
 
+func (auth *Auth) GetUserDB(username string) (*sidb.Database, error) {
+	if existing_db, ok := auth.userDbs[username]; ok {
+		return existing_db, nil
+	}
+
+	db, err := sidb.Init([]string{auth.namespace, "users"}, username)
+
+	if err != nil {
+		return nil, err
+	}
+
+	auth.userDbs[username] = db
+	return db, nil
+}
+
 func (auth *Auth) CreateUser(params CreateUserParams) error {
-	existing_user, err := auth.db.GetByKey(params.Username, USER_TYPE)
+	db, err := auth.GetUserDB(params.Username)
+
+	if err != nil {
+		return err
+	}
+
+	existing_user, err := db.GetByKey(params.Username, USER_TYPE)
 	if err != nil {
 		return err
 	}
@@ -99,7 +124,7 @@ func (auth *Auth) CreateUser(params CreateUserParams) error {
 		return err
 	}
 
-	_, err = auth.db.Upsert(sidb.EntryInput{
+	_, err = db.Upsert(sidb.EntryInput{
 		Key:      params.Username,
 		Value:    encodedProtoUser,
 		Type:     USER_TYPE,
@@ -115,7 +140,7 @@ var ErrExpiredToken = errors.New("expired token")
 func (auth *Auth) ValidateToken(
 	authCode string,
 ) (*Token, error) {
-	entry, err := auth.db.GetByKey(authCode, TOKEN_TYPE)
+	entry, err := auth.tokenDb.GetByKey(authCode, TOKEN_TYPE)
 
 	if err != nil {
 		return nil, err
@@ -133,7 +158,7 @@ func (auth *Auth) ValidateToken(
 	}
 
 	if time.Now().UnixMilli() > token.Expiry {
-		go auth.db.DeleteByKey(authCode, TOKEN_TYPE)
+		go auth.tokenDb.DeleteByKey(authCode, TOKEN_TYPE)
 		return nil, ErrExpiredToken
 	}
 
@@ -162,7 +187,7 @@ func (auth *Auth) RefreshToken(
 		return err
 	}
 
-	err = auth.db.Update(sidb.EntryInput{
+	err = auth.tokenDb.Update(sidb.EntryInput{
 		Key:      token.Code,
 		Value:    serializedToken,
 		Type:     TOKEN_TYPE,
@@ -184,7 +209,7 @@ func (auth *Auth) RevokeToken(
 		return ErrInvalidToken
 	}
 
-	return auth.db.DeleteByKey(token.Code, TOKEN_TYPE)
+	return auth.tokenDb.DeleteByKey(token.Code, TOKEN_TYPE)
 }
 
 func (auth *Auth) RegenerateToken(
@@ -196,7 +221,7 @@ func (auth *Auth) RegenerateToken(
 		return nil, err
 	}
 
-	err = auth.db.DeleteByKey(authCode, TOKEN_TYPE)
+	err = auth.tokenDb.DeleteByKey(authCode, TOKEN_TYPE)
 
 	if err != nil {
 		return nil, err
@@ -218,7 +243,12 @@ func (auth *Auth) ValidatePassword(
 	username string,
 	password string,
 ) (bool, error) {
-	user, err := auth.db.GetByKey(username, USER_TYPE)
+	db, err := auth.GetUserDB(username)
+
+	if err != nil {
+		return false, err
+	}
+	user, err := db.GetByKey(username, USER_TYPE)
 
 	if err != nil {
 		return false, err
@@ -251,7 +281,13 @@ func (auth *Auth) ValidatePassword(
 func (auth *Auth) GenerateToken(
 	username string,
 ) (*Token, error) {
-	user, err := auth.db.GetByKey(username, USER_TYPE)
+	db, err := auth.GetUserDB(username)
+
+	if err != nil {
+		return nil, err
+	}
+
+	user, err := db.GetByKey(username, USER_TYPE)
 
 	if err != nil {
 		return nil, err
@@ -280,7 +316,7 @@ func (auth *Auth) GenerateToken(
 		return nil, err
 	}
 
-	_, err = auth.db.Upsert(sidb.EntryInput{
+	_, err = auth.tokenDb.Upsert(sidb.EntryInput{
 		Key:      token.Code,
 		Value:    serializedToken,
 		Type:     TOKEN_TYPE,
@@ -303,7 +339,21 @@ func generateRandomToken() (string, error) {
 }
 
 func (auth *Auth) DeleteUser(username string) error {
-	err := auth.db.DeleteByKey(username, USER_TYPE)
+	// Delete the file
+	db, err := auth.GetUserDB(username)
+
+	if err != nil {
+		return err
+	}
+
+	err = db.Drop()
+
+	if err != nil {
+		return err
+	}
+
+	auth.tokenDb.DeleteByGrouping(username, TOKEN_TYPE)
+
 	return err
 }
 
@@ -320,8 +370,13 @@ func (auth *Auth) ChangePassword(username, oldPassword, newPassword string) erro
 }
 
 func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
+	db, err := auth.GetUserDB(username)
+	if err != nil {
+		return nil, err
+	}
+
 	// First, check if the user exists.
-	user, err := auth.db.GetByKey(username, USER_TYPE)
+	user, err := db.GetByKey(username, USER_TYPE)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +402,7 @@ func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
 	}
 
 	resetKey := username + "-reset"
-	_, err = auth.db.Upsert(sidb.EntryInput{
+	_, err = auth.tokenDb.Upsert(sidb.EntryInput{
 		Key:      resetKey,
 		Value:    serializedToken,
 		Type:     TOKEN_TYPE,
@@ -361,7 +416,7 @@ func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
 
 func (auth *Auth) ResetPasswordWithToken(username, tokenValue, newPassword string) error {
 	resetKey := username + "-reset"
-	entry, err := auth.db.GetByKey(resetKey, TOKEN_TYPE)
+	entry, err := auth.tokenDb.GetByKey(resetKey, TOKEN_TYPE)
 	if err != nil {
 		return err
 	}
@@ -388,7 +443,7 @@ func (auth *Auth) ResetPasswordWithToken(username, tokenValue, newPassword strin
 		return err
 	}
 
-	err = auth.db.DeleteByKey(resetKey, TOKEN_TYPE)
+	err = auth.tokenDb.DeleteByKey(resetKey, TOKEN_TYPE)
 	if err != nil {
 		// Log this error, but don't return it to the user, as the password change was successful.
 		log.Printf("Failed to delete password reset token for %s: %v", username, err)
@@ -402,8 +457,14 @@ func (auth *Auth) ResetPassword(username, newPassword string) error {
 		return err
 	}
 
+	db, err := auth.GetUserDB(username)
+
+	if err != nil {
+		return err
+	}
+
 	// fetch user entry
-	userEntry, err := auth.db.GetByKey(username, USER_TYPE)
+	userEntry, err := db.GetByKey(username, USER_TYPE)
 	if err != nil {
 		return err
 	}
@@ -422,7 +483,7 @@ func (auth *Auth) ResetPassword(username, newPassword string) error {
 		return err
 	}
 
-	return auth.db.Update(sidb.EntryInput{
+	return db.Update(sidb.EntryInput{
 		Key:      username,
 		Value:    updated,
 		Type:     USER_TYPE,
@@ -433,34 +494,6 @@ func (auth *Auth) ResetPassword(username, newPassword string) error {
 /////////////////////
 // High level APIs //
 /////////////////////
-
-type Status struct {
-	Valid    bool
-	Username string
-	Expiry   int64
-}
-
-func (auth *Auth) Status(authCode string) (*Status, error) {
-	token, err := auth.ValidateToken(authCode)
-
-	if err != nil {
-		if errors.Is(err, ErrMissingToken) || errors.Is(err, ErrExpiredToken) {
-			return &Status{
-				Valid:    false,
-				Username: "",
-				Expiry:   0,
-			}, nil
-		}
-		return nil, err
-	}
-
-	return &Status{
-		Valid:    true,
-		Username: token.Username,
-		Expiry:   token.Expiry,
-	}, nil
-
-}
 
 func (auth *Auth) Signup(params CreateUserParams) (*Token, error) {
 	err := auth.CreateUser(params)
@@ -545,7 +578,7 @@ func (auth *Auth) ResetPasswordAndGenerateToken(username string, newPassword str
 }
 
 func (auth *Auth) GetTokensByUsername(username string) ([]*Token, error) {
-	entries, err := auth.db.GetByGrouping(username, TOKEN_TYPE)
+	entries, err := auth.tokenDb.GetByGrouping(username, TOKEN_TYPE)
 	if err != nil {
 		return nil, err
 	}

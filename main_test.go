@@ -8,11 +8,22 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func Cleanup(siauth *Auth) {
+	if siauth == nil {
+		return
+	}
+	siauth.tokenDb.Drop()
+	for _, db := range siauth.userDbs {
+		db.Drop()
+	}
+}
+
 func TestInit(t *testing.T) {
 	pepper := [32]byte{}
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
@@ -20,14 +31,13 @@ func TestInit(t *testing.T) {
 		t.Fatal("Auth is nil")
 	}
 
-	defer auth.db.Drop()
-
 	if auth.pepper != pepper {
 		t.Errorf("Expected pepper %v, got %v", pepper, auth.pepper)
 	}
-	if auth.db == nil {
+	if auth.tokenDb == nil {
 		t.Fatal("Database is nil")
 	}
+
 }
 
 func TestCreateUser(t *testing.T) {
@@ -35,10 +45,10 @@ func TestCreateUser(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	params := CreateUserParams{
 		Username: "testuser",
@@ -56,10 +66,10 @@ func TestCreateDuplicateUser(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	params := CreateUserParams{
 		Username: "testuser",
@@ -82,10 +92,10 @@ func TestGenerateToken(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	params := CreateUserParams{
 		Username: "testuser",
@@ -125,10 +135,10 @@ func TestGenerateTokenNonExistentUser(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	token, err := auth.GenerateToken("nonexistentuser")
 	if err == nil {
@@ -149,10 +159,10 @@ func TestAuthenticateToken(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -197,11 +207,10 @@ func TestAuthenticateTokenInvalid(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -235,10 +244,10 @@ func TestAuthenticateTokenExpired(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -267,7 +276,7 @@ func TestAuthenticateTokenExpired(t *testing.T) {
 		t.Fatalf("Failed to serialize token: %v", err)
 	}
 
-	err = auth.db.Update(sidb.EntryInput{
+	err = auth.tokenDb.Update(sidb.EntryInput{
 		Key:   token.Code,
 		Value: serializedToken,
 		Type:  TOKEN_TYPE,
@@ -290,10 +299,10 @@ func TestRefreshToken(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -324,7 +333,7 @@ func TestRefreshToken(t *testing.T) {
 		t.Fatalf("RefreshToken failed: %v", err)
 	}
 
-	entry, err := auth.db.GetByKey(token.Code, TOKEN_TYPE)
+	entry, err := auth.tokenDb.GetByKey(token.Code, TOKEN_TYPE)
 	if err != nil {
 		t.Fatalf("Failed to retrieve token after refresh: %v", err)
 	}
@@ -348,10 +357,10 @@ func TestRefreshMissingToken(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -374,10 +383,10 @@ func TestRegenerateToken(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -434,10 +443,10 @@ func TestValidatePassword(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -462,10 +471,10 @@ func TestValidatePasswordInvalid(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -490,10 +499,10 @@ func TestValidatePasswordNonExistentUser(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	valid, err := auth.ValidatePassword("nonexistentuser", "password123")
 	if err == nil {
@@ -509,10 +518,10 @@ func TestChangePassword(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -551,10 +560,10 @@ func TestResetPasswordWithToken(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -599,11 +608,10 @@ func TestRevokeToken(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -641,11 +649,11 @@ func TestRevokeMissingToken(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	defer auth.db.Drop()
 	err = auth.RevokeToken("nonexistenttoken")
 
 	if err != ErrMissingToken {
@@ -658,10 +666,10 @@ func TestGetTokensByUsername(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -699,10 +707,10 @@ func TestGetTokensByUsernameNoTokens(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	err = auth.CreateUser(CreateUserParams{
 		Username: "testuser",
@@ -727,10 +735,10 @@ func TestGetTokensByUsernameNonExistentUser(t *testing.T) {
 	namespace := "test_namespace"
 
 	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer auth.db.Drop()
 
 	tokens, err := auth.GetTokensByUsername("nonexistentuser")
 	if err != nil {
