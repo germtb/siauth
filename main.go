@@ -75,7 +75,7 @@ type CreateUserParams struct {
 
 var ErrUserExists = errors.New("user already exists")
 
-func (auth *Auth) GetUserDB(username string) (*sidb.Database, error) {
+func (auth *Auth) GetUserDb(username string) (*sidb.Database, error) {
 	if existing_db, ok := auth.userDbs[username]; ok {
 		return existing_db, nil
 	}
@@ -117,7 +117,7 @@ func (auth *Auth) CreateUser(params CreateUserParams) error {
 		return ErrInvalidUsername
 	}
 
-	db, err := auth.GetUserDB(params.Username)
+	db, err := auth.GetUserDb(params.Username)
 
 	if err != nil {
 		return err
@@ -269,7 +269,7 @@ func (auth *Auth) ValidatePassword(
 	username string,
 	password string,
 ) (bool, error) {
-	db, err := auth.GetUserDB(username)
+	db, err := auth.GetUserDb(username)
 
 	if err != nil {
 		return false, err
@@ -307,7 +307,7 @@ func (auth *Auth) ValidatePassword(
 func (auth *Auth) GenerateToken(
 	username string,
 ) (*Token, error) {
-	db, err := auth.GetUserDB(username)
+	db, err := auth.GetUserDb(username)
 
 	if err != nil {
 		return nil, err
@@ -366,7 +366,7 @@ func generateRandomToken() (string, error) {
 
 func (auth *Auth) DeleteUser(username string) error {
 	// Delete the file
-	db, err := auth.GetUserDB(username)
+	db, err := auth.GetUserDb(username)
 
 	if err != nil {
 		return err
@@ -396,7 +396,7 @@ func (auth *Auth) ChangePassword(username, oldPassword, newPassword string) erro
 }
 
 func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
-	db, err := auth.GetUserDB(username)
+	db, err := auth.GetUserDb(username)
 	if err != nil {
 		return nil, err
 	}
@@ -483,7 +483,7 @@ func (auth *Auth) ResetPassword(username, newPassword string) error {
 		return err
 	}
 
-	db, err := auth.GetUserDB(username)
+	db, err := auth.GetUserDb(username)
 
 	if err != nil {
 		return err
