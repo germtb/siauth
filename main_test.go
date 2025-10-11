@@ -5,16 +5,15 @@ import (
 	"time"
 
 	"github.com/germtb/sidb"
-	"google.golang.org/protobuf/proto"
 )
 
 func Cleanup(siauth *Auth) {
 	if siauth == nil {
 		return
 	}
-	siauth.tokenDb.Drop()
+	siauth.tokenStore.DropParentDb()
 	for _, db := range siauth.userDbs {
-		db.Drop()
+		db.DropParentDb()
 	}
 }
 
@@ -34,7 +33,7 @@ func TestInit(t *testing.T) {
 	if auth.pepper != pepper {
 		t.Errorf("Expected pepper %v, got %v", pepper, auth.pepper)
 	}
-	if auth.tokenDb == nil {
+	if auth.tokenStore == nil {
 		t.Fatal("Database is nil")
 	}
 
@@ -270,16 +269,10 @@ func TestAuthenticateTokenExpired(t *testing.T) {
 
 	// Manually expire the token
 	token.Expiry = time.Now().Add(-1 * time.Hour).UnixMilli()
-	serializedToken, err := proto.Marshal(token)
 
-	if err != nil {
-		t.Fatalf("Failed to serialize token: %v", err)
-	}
-
-	err = auth.tokenDb.Update(sidb.EntryInput{
+	err = auth.tokenStore.Upsert(sidb.StoreEntryInput[*Token]{
 		Key:   token.Code,
-		Value: serializedToken,
-		Type:  TOKEN_TYPE,
+		Value: token,
 	})
 	if err != nil {
 		t.Fatalf("Failed to update token expiry: %v", err)
@@ -333,15 +326,9 @@ func TestRefreshToken(t *testing.T) {
 		t.Fatalf("RefreshToken failed: %v", err)
 	}
 
-	entry, err := auth.tokenDb.GetByKey(token.Code, TOKEN_TYPE)
+	refreshedToken, err := auth.tokenStore.Get(token.Code)
 	if err != nil {
 		t.Fatalf("Failed to retrieve token after refresh: %v", err)
-	}
-
-	var refreshedToken Token
-	err = proto.Unmarshal(entry.Value, &refreshedToken)
-	if err != nil {
-		t.Fatalf("Failed to unmarshal refreshed token: %v", err)
 	}
 
 	if refreshedToken.Expiry <= originalExpiry {

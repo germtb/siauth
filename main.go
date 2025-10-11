@@ -7,15 +7,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"log"
+	sync "sync"
 	"time"
 
 	"github.com/germtb/sidb"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/protobuf/proto"
 )
-
-var USER_TYPE = "user"
-var TOKEN_TYPE = "token"
 
 type User struct {
 	Id       int64  // autoincrement
@@ -26,10 +24,33 @@ type User struct {
 }
 
 type Auth struct {
-	pepper    [32]byte
-	namespace string
-	userDbs   map[string]*sidb.Database
-	tokenDb   *sidb.Database
+	pepper     [32]byte
+	namespace  string
+	userDbs    map[string]*sidb.Store[*ProtoUser]
+	mutex      sync.Mutex
+	tokenStore *sidb.Store[*Token]
+}
+
+func serialize[T proto.Message](msg T) ([]byte, error) {
+	return proto.Marshal(msg)
+}
+
+func deserializeToken(data []byte) (*Token, error) {
+	var token Token
+	err := proto.Unmarshal(data, &token)
+	if err != nil {
+		return nil, err
+	}
+	return &token, nil
+}
+
+func deserializeUser(data []byte) (*ProtoUser, error) {
+	var user ProtoUser
+	err := proto.Unmarshal(data, &user)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }
 
 func Init(
@@ -43,10 +64,11 @@ func Init(
 	}
 
 	return &Auth{
-		pepper:    pepper,
-		namespace: namespace,
-		userDbs:   map[string]*sidb.Database{},
-		tokenDb:   tokenDb,
+		pepper:     pepper,
+		namespace:  namespace,
+		userDbs:    map[string]*sidb.Store[*ProtoUser]{},
+		tokenStore: sidb.MakeStore(tokenDb, "token", serialize, deserializeToken, nil),
+		mutex:      sync.Mutex{},
 	}, nil
 }
 
@@ -75,9 +97,13 @@ type CreateUserParams struct {
 
 var ErrUserExists = errors.New("user already exists")
 
-func (auth *Auth) GetUserDb(username string) (*sidb.Database, error) {
-	if existing_db, ok := auth.userDbs[username]; ok {
-		return existing_db, nil
+func (auth *Auth) GetUserStore(username string) (*sidb.Store[*ProtoUser], error) {
+	auth.mutex.Lock()
+	store, ok := auth.userDbs[username]
+	auth.mutex.Unlock()
+
+	if ok {
+		return store, nil
 	}
 
 	db, err := sidb.Init([]string{auth.namespace, "users"}, username)
@@ -86,8 +112,17 @@ func (auth *Auth) GetUserDb(username string) (*sidb.Database, error) {
 		return nil, err
 	}
 
-	auth.userDbs[username] = db
-	return db, nil
+	store = sidb.MakeStore(db, "user", serialize, deserializeUser, nil)
+
+	auth.mutex.Lock()
+	existingStore, ok := auth.userDbs[username]
+	if !ok {
+		auth.userDbs[username] = store
+		existingStore = store
+	}
+	auth.mutex.Unlock()
+
+	return existingStore, nil
 }
 
 func validateUsername(username string) bool {
@@ -117,13 +152,13 @@ func (auth *Auth) CreateUser(params CreateUserParams) error {
 		return ErrInvalidUsername
 	}
 
-	db, err := auth.GetUserDb(params.Username)
+	store, err := auth.GetUserStore(params.Username)
 
 	if err != nil {
 		return err
 	}
 
-	existing_user, err := db.GetByKey(params.Username, USER_TYPE)
+	existing_user, err := store.Get(params.Username)
 	if err != nil {
 		return err
 	}
@@ -144,20 +179,11 @@ func (auth *Auth) CreateUser(params CreateUserParams) error {
 		Number:       params.Number,
 	}
 
-	encodedProtoUser, err := proto.Marshal(&protoUser)
-
-	if err != nil {
-		return err
-	}
-
-	_, err = db.Upsert(sidb.EntryInput{
+	return store.Upsert(sidb.StoreEntryInput[*ProtoUser]{
 		Key:      params.Username,
-		Value:    encodedProtoUser,
-		Type:     USER_TYPE,
+		Value:    &protoUser,
 		Grouping: params.Username,
 	})
-
-	return err
 }
 
 var ErrMissingToken = errors.New("missing token")
@@ -166,29 +192,22 @@ var ErrExpiredToken = errors.New("expired token")
 func (auth *Auth) ValidateToken(
 	authCode string,
 ) (*Token, error) {
-	entry, err := auth.tokenDb.GetByKey(authCode, TOKEN_TYPE)
+	token, err := auth.tokenStore.Get(authCode)
 
 	if err != nil {
 		return nil, err
 	}
 
-	if entry == nil {
+	if token == nil {
 		return nil, ErrMissingToken
 	}
 
-	var token Token
-	err = proto.Unmarshal(entry.Value, &token)
-
-	if err != nil {
-		return nil, err
-	}
-
 	if time.Now().UnixMilli() > token.Expiry {
-		go auth.tokenDb.DeleteByKey(authCode, TOKEN_TYPE)
+		go auth.tokenStore.Delete(authCode)
 		return nil, ErrExpiredToken
 	}
 
-	return &token, nil
+	return token, nil
 }
 
 var ErrInvalidToken = errors.New("invalid token")
@@ -207,16 +226,9 @@ func (auth *Auth) RefreshToken(
 
 	token.Expiry = time.Now().Add(24 * time.Hour).UnixMilli()
 
-	serializedToken, err := proto.Marshal(token)
-
-	if err != nil {
-		return err
-	}
-
-	err = auth.tokenDb.Update(sidb.EntryInput{
+	err = auth.tokenStore.Upsert(sidb.StoreEntryInput[*Token]{
 		Key:      token.Code,
-		Value:    serializedToken,
-		Type:     TOKEN_TYPE,
+		Value:    token,
 		Grouping: token.Username,
 	})
 
@@ -235,7 +247,7 @@ func (auth *Auth) RevokeToken(
 		return ErrInvalidToken
 	}
 
-	return auth.tokenDb.DeleteByKey(token.Code, TOKEN_TYPE)
+	return auth.tokenStore.Delete(token.Code)
 }
 
 func (auth *Auth) RegenerateToken(
@@ -247,7 +259,7 @@ func (auth *Auth) RegenerateToken(
 		return nil, err
 	}
 
-	err = auth.tokenDb.DeleteByKey(authCode, TOKEN_TYPE)
+	err = auth.tokenStore.Delete(authCode)
 
 	if err != nil {
 		return nil, err
@@ -269,12 +281,12 @@ func (auth *Auth) ValidatePassword(
 	username string,
 	password string,
 ) (bool, error) {
-	db, err := auth.GetUserDb(username)
+	store, err := auth.GetUserStore(username)
 
 	if err != nil {
 		return false, err
 	}
-	user, err := db.GetByKey(username, USER_TYPE)
+	user, err := store.Get(username)
 
 	if err != nil {
 		return false, err
@@ -284,15 +296,8 @@ func (auth *Auth) ValidatePassword(
 		return false, ErrUserNotFound
 	}
 
-	var protoUser ProtoUser
-	err = proto.Unmarshal(user.Value, &protoUser)
-
-	if err != nil {
-		return false, err
-	}
-
 	peppered := auth.applyPepper(password)
-	err = bcrypt.CompareHashAndPassword(protoUser.PasswordHash, peppered)
+	err = bcrypt.CompareHashAndPassword(user.PasswordHash, peppered)
 
 	if err != nil {
 		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
@@ -307,13 +312,13 @@ func (auth *Auth) ValidatePassword(
 func (auth *Auth) GenerateToken(
 	username string,
 ) (*Token, error) {
-	db, err := auth.GetUserDb(username)
+	store, err := auth.GetUserStore(username)
 
 	if err != nil {
 		return nil, err
 	}
 
-	user, err := db.GetByKey(username, USER_TYPE)
+	user, err := store.Get(username)
 
 	if err != nil {
 		return nil, err
@@ -336,16 +341,9 @@ func (auth *Auth) GenerateToken(
 		Expiry:   time.Now().Add(duration).UnixMilli(),
 	}
 
-	serializedToken, err := proto.Marshal(token)
-
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = auth.tokenDb.Upsert(sidb.EntryInput{
+	err = auth.tokenStore.Upsert(sidb.StoreEntryInput[*Token]{
 		Key:      token.Code,
-		Value:    serializedToken,
-		Type:     TOKEN_TYPE,
+		Value:    token,
 		Grouping: username,
 	})
 
@@ -366,19 +364,19 @@ func generateRandomToken() (string, error) {
 
 func (auth *Auth) DeleteUser(username string) error {
 	// Delete the file
-	db, err := auth.GetUserDb(username)
+	store, err := auth.GetUserStore(username)
 
 	if err != nil {
 		return err
 	}
 
-	err = db.Drop()
+	err = store.DropParentDb()
 
 	if err != nil {
 		return err
 	}
 
-	auth.tokenDb.DeleteByGrouping(username, TOKEN_TYPE)
+	auth.tokenStore.DeleteByGrouping(username)
 
 	return err
 }
@@ -396,13 +394,13 @@ func (auth *Auth) ChangePassword(username, oldPassword, newPassword string) erro
 }
 
 func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
-	db, err := auth.GetUserDb(username)
+	store, err := auth.GetUserStore(username)
 	if err != nil {
 		return nil, err
 	}
 
 	// First, check if the user exists.
-	user, err := db.GetByKey(username, USER_TYPE)
+	user, err := store.Get(username)
 	if err != nil {
 		return nil, err
 	}
@@ -422,16 +420,10 @@ func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
 		Expiry:   time.Now().Add(duration).UnixMilli(),
 	}
 
-	serializedToken, err := proto.Marshal(token)
-	if err != nil {
-		return nil, err
-	}
-
 	resetKey := username + "-reset"
-	_, err = auth.tokenDb.Upsert(sidb.EntryInput{
+	err = auth.tokenStore.Upsert(sidb.StoreEntryInput[*Token]{
 		Key:      resetKey,
-		Value:    serializedToken,
-		Type:     TOKEN_TYPE,
+		Value:    token,
 		Grouping: username,
 	})
 	if err != nil {
@@ -442,18 +434,12 @@ func (auth *Auth) GeneratePasswordResetToken(username string) (*Token, error) {
 
 func (auth *Auth) ResetPasswordWithToken(username, tokenValue, newPassword string) error {
 	resetKey := username + "-reset"
-	entry, err := auth.tokenDb.GetByKey(resetKey, TOKEN_TYPE)
+	storedToken, err := auth.tokenStore.Get(resetKey)
 	if err != nil {
 		return err
 	}
-	if entry == nil {
+	if storedToken == nil {
 		return ErrMissingToken
-	}
-
-	var storedToken Token
-	err = proto.Unmarshal(entry.Value, &storedToken)
-	if err != nil {
-		return err
 	}
 
 	if storedToken.Code != tokenValue {
@@ -469,7 +455,7 @@ func (auth *Auth) ResetPasswordWithToken(username, tokenValue, newPassword strin
 		return err
 	}
 
-	err = auth.tokenDb.DeleteByKey(resetKey, TOKEN_TYPE)
+	err = auth.tokenStore.Delete(resetKey)
 	if err != nil {
 		// Log this error, but don't return it to the user, as the password change was successful.
 		log.Printf("Failed to delete password reset token for %s: %v", username, err)
@@ -483,37 +469,29 @@ func (auth *Auth) ResetPassword(username, newPassword string) error {
 		return err
 	}
 
-	db, err := auth.GetUserDb(username)
+	store, err := auth.GetUserStore(username)
 
 	if err != nil {
 		return err
 	}
 
 	// fetch user entry
-	userEntry, err := db.GetByKey(username, USER_TYPE)
+	protoUser, err := store.Get(username)
 	if err != nil {
 		return err
 	}
-	if userEntry == nil {
+	if protoUser == nil {
 		return ErrUserNotFound
 	}
 
-	var protoUser ProtoUser
-	if err := proto.Unmarshal(userEntry.Value, &protoUser); err != nil {
-		return err
-	}
 	protoUser.PasswordHash = hash
 
-	updated, err := proto.Marshal(&protoUser)
-	if err != nil {
-		return err
-	}
+	// drop all existing tokens for this user
+	go auth.tokenStore.DeleteByGrouping(username)
 
-	return db.Update(sidb.EntryInput{
-		Key:      username,
-		Value:    updated,
-		Type:     USER_TYPE,
-		Grouping: username,
+	return store.Upsert(sidb.StoreEntryInput[*ProtoUser]{
+		Key:   username,
+		Value: protoUser,
 	})
 }
 
@@ -604,20 +582,7 @@ func (auth *Auth) ResetPasswordAndGenerateToken(username string, newPassword str
 }
 
 func (auth *Auth) GetTokensByUsername(username string) ([]*Token, error) {
-	entries, err := auth.tokenDb.GetByGrouping(username, TOKEN_TYPE)
-	if err != nil {
-		return nil, err
-	}
-
-	tokens := make([]*Token, 0, len(entries))
-	for _, entry := range entries {
-		var token Token
-		err := proto.Unmarshal(entry.Value, &token)
-		if err != nil {
-			return nil, err
-		}
-		tokens = append(tokens, &token)
-	}
-
-	return tokens, nil
+	return auth.tokenStore.Query(sidb.StoreQueryParams{
+		Grouping: &username,
+	})
 }
