@@ -39,17 +39,48 @@ func GetAuthCookie(r *http.Request) (*AuthCookie, error) {
 	}, nil
 }
 
-func ValidateAuthCookie(r *http.Request, auth *Auth) (*Token, error) {
+// GetBearerToken extracts the token from Authorization header
+// Supports "Bearer <token>" format
+func GetBearerToken(r *http.Request) (string, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return "", errors.New("missing authorization header")
+	}
+
+	// Check for "Bearer " prefix
+	const bearerPrefix = "Bearer "
+	if len(authHeader) < len(bearerPrefix) || authHeader[:len(bearerPrefix)] != bearerPrefix {
+		return "", errors.New("invalid authorization header format")
+	}
+
+	return authHeader[len(bearerPrefix):], nil
+}
+
+// GetAuthToken extracts token from either Cookie or Authorization header
+// Tries Cookie first (for web), then Authorization header (for CLI/API)
+func GetAuthToken(r *http.Request) (string, error) {
+	// Try cookie first
 	cookie, err := GetAuthCookie(r)
+	if err == nil && cookie != nil {
+		return cookie.AuthCode, nil
+	}
+
+	// Fall back to Bearer token
+	return GetBearerToken(r)
+}
+
+// ValidateAuthToken validates token from either Cookie or Authorization header
+func ValidateAuthToken(r *http.Request, auth *Auth) (*Token, error) {
+	tokenCode, err := GetAuthToken(r)
 	if err != nil {
 		return nil, err
 	}
 
-	return auth.ValidateToken(cookie.AuthCode)
+	return auth.ValidateToken(tokenCode)
 }
 
-func GetUsernameFromAuthCookie(r *http.Request, auth *Auth) (string, error) {
-	token, err := ValidateAuthCookie(r, auth)
+func GetUsernameFromAuthToken(r *http.Request, auth *Auth) (string, error) {
+	token, err := ValidateAuthToken(r, auth)
 	if err != nil {
 		return "", err
 	} else if token == nil {
@@ -273,7 +304,7 @@ func (s *AuthRpcServer) HandleRpc(w http.ResponseWriter, r *http.Request) {
 			}
 			return proto.Marshal(result)
 		case "RequestAuthCode":
-			token, err := ValidateAuthCookie(r, s.Auth)
+			token, err := ValidateAuthToken(r, s.Auth)
 
 			if err != nil {
 				return nil, err
@@ -281,7 +312,7 @@ func (s *AuthRpcServer) HandleRpc(w http.ResponseWriter, r *http.Request) {
 				return nil, fmt.Errorf("unauthenticated")
 			}
 
-			username, err := GetUsernameFromAuthCookie(r, s.Auth)
+			username, err := GetUsernameFromAuthToken(r, s.Auth)
 
 			var requestAuthCodeParams RequestAuthCodeParams
 			if err := proto.Unmarshal(body, &requestAuthCodeParams); err != nil {

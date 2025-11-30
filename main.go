@@ -213,38 +213,28 @@ func (auth *Auth) ValidateToken(
 		return nil, ErrMissingToken
 	}
 
-	if time.Now().UnixMilli() > token.Expiry {
+	now := time.Now().UnixMilli()
+	if now > token.Expiry {
 		go auth.tokenStore.Delete(authCode)
 		return nil, ErrExpiredToken
+	}
+
+	// Always refresh the token on valid use
+	token.Expiry = time.Now().Add(24 * time.Hour).UnixMilli()
+	err = auth.tokenStore.Upsert(sidb.StoreEntryInput[*Token]{
+		Key:      token.Code,
+		Value:    token,
+		Grouping: token.Username,
+	})
+	if err != nil {
+		// Log error but still return the valid token
+		log.Printf("Warning: failed to refresh token: %v", err)
 	}
 
 	return token, nil
 }
 
 var ErrInvalidToken = errors.New("invalid token")
-
-func (auth *Auth) RefreshToken(
-	authCode string,
-) error {
-	token, err := auth.ValidateToken(authCode)
-	if err != nil {
-		return err
-	}
-
-	if token == nil {
-		return ErrInvalidToken
-	}
-
-	token.Expiry = time.Now().Add(24 * time.Hour).UnixMilli()
-
-	err = auth.tokenStore.Upsert(sidb.StoreEntryInput[*Token]{
-		Key:      token.Code,
-		Value:    token,
-		Grouping: token.Username,
-	})
-
-	return err
-}
 
 func (auth *Auth) RevokeToken(
 	authCode string,
