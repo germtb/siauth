@@ -1,0 +1,16 @@
+{
+  "name": "siauth-ts",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "types": "siauth_schema.ts",
+  "description": "TypeScript client and types for the Siauth RPC service.",
+  "author": "germtb",
+  "license": "MIT",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["rpc", "protobuf", "siauth", "typescript", "client"],
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.10.1"
+  }
+}

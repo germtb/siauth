@@ -3,3 +3,7 @@
 protoc --go_out=. --go-grpc_out=. siauth_schema.proto;
 
 PROTO_DIR=.
+
+protoc --plugin=protoc-gen-ts_proto=$(which protoc-gen-ts_proto) \
+  --ts_proto_out=./siauth-ts \
+  --proto_path=. siauth_schema.proto

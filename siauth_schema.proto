@@ -15,3 +15,96 @@ message Token {
   string username = 2;
   int64 expiry = 3;
 }
+
+message AuthCode {
+  string code = 1;
+  string client_id = 2;
+  string redirect_uri = 3;
+  optional string code_challenge = 4;  // for PKCE (S256)
+  int64 expiry = 5;
+  bool used = 6;
+}
+
+
+message StatusParams {}
+
+message StatusResult {
+  string username = 1;
+  bool is_authenticated = 2;
+  bool is_subscribed = 3;
+}
+
+message SignupParams {
+  string username = 1;
+  string password = 2;
+  optional string name = 3;
+  optional string email = 4;
+  optional string number = 5;
+}
+message SignupResult {
+  bool success = 1;
+  string username = 2;
+}
+
+message LoginParams {
+  string username = 1;
+  string password = 2;
+}
+message LoginResult {
+  bool success = 1;
+}
+
+message LogoutParams {}
+message LogoutResult {
+  bool success = 1;
+}
+
+message ChangePasswordParams {
+  string username = 1;
+  string old_password = 2;
+  string new_password = 3;
+}
+message ChangePasswordResult {
+  bool success = 1;
+}
+
+message ResetPasswordParams {
+  string username = 1;
+  string new_password = 2;
+  string reset_token = 3;
+}
+message ResetPasswordResult {
+  bool success = 1;
+}
+
+message RequestAuthCodeParams {
+  string client_id = 1;
+  string redirect_uri = 2;
+  optional string code_challenge = 3; // for PKCE (S256)
+}
+message RequestAuthCodeResult {
+  bool success = 1;
+  optional AuthCode auth_code = 2;
+}
+
+message ExchangeAuthCodeParams {
+  string client_id = 1;
+  string redirect_uri = 2;
+  string code = 3;
+  optional string code_verifier = 4; // for PKCE (S256)
+}
+message ExchangeAuthCodeResult {
+  optional Token token = 1;
+  optional string error = 2;
+}
+
+service Auth {
+    rpc Status (StatusParams) returns (StatusResult) {}
+    rpc Signup (SignupParams) returns (SignupResult) {}
+    rpc Login (LoginParams) returns (LoginResult) {}
+    rpc Logout (LogoutParams) returns (LogoutResult) {}
+    rpc ChangePassword (ChangePasswordParams) returns (ChangePasswordResult) {}
+    rpc ResetPassword (ResetPasswordParams) returns (ResetPasswordResult) {}
+    rpc RequestAuthCode (RequestAuthCodeParams) returns (RequestAuthCodeResult) {}
+    rpc ExchangeAuthCode (ExchangeAuthCodeParams) returns (ExchangeAuthCodeResult) {}
+}

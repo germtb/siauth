@@ -29,6 +29,7 @@ type Auth struct {
 	userDbs    map[string]*sidb.Store[*ProtoUser]
 	mutex      sync.Mutex
 	tokenStore *sidb.Store[*Token]
+	codeStore  *sidb.Store[*AuthCode]
 }
 
 func serialize[T proto.Message](msg T) ([]byte, error) {
@@ -42,6 +43,15 @@ func deserializeToken(data []byte) (*Token, error) {
 		return nil, err
 	}
 	return &token, nil
+}
+
+func deserializeAuthCode(data []byte) (*AuthCode, error) {
+	var code AuthCode
+	err := proto.Unmarshal(data, &code)
+	if err != nil {
+		return nil, err
+	}
+	return &code, nil
 }
 
 func deserializeUser(data []byte) (*ProtoUser, error) {
@@ -68,6 +78,7 @@ func Init(
 		namespace:  namespace,
 		userDbs:    map[string]*sidb.Store[*ProtoUser]{},
 		tokenStore: sidb.MakeStore(tokenDb, "token", serialize, deserializeToken, nil),
+		codeStore:  sidb.MakeStore(tokenDb, "auth_code", serialize, deserializeAuthCode, nil),
 		mutex:      sync.Mutex{},
 	}, nil
 }
@@ -272,6 +283,29 @@ func (auth *Auth) RegenerateToken(
 	}
 
 	return newToken, nil
+}
+
+func (auth *Auth) GenerateAuthCode(clientID string, redirectURI string, codeChallenge *string) (*AuthCode, error) {
+	code, err := generateRandomToken()
+	if err != nil {
+		return nil, err
+	}
+
+	authCode := &AuthCode{
+		Code:          code,
+		ClientId:      clientID,
+		RedirectUri:   redirectURI,
+		CodeChallenge: codeChallenge,
+		Expiry:        time.Now().Add(5 * time.Minute).UnixMilli(),
+		Used:          false,
+	}
+
+	// Upsert into a store keyed like "code:"+code OR use a separate store
+	err = auth.codeStore.Upsert(sidb.StoreEntryInput[*AuthCode]{Key: code, Value: authCode})
+	if err != nil {
+		return nil, err
+	}
+	return authCode, nil
 }
 
 var ErrUserNotFound = errors.New("user not found")
@@ -495,6 +529,15 @@ func (auth *Auth) ResetPassword(username, newPassword string) error {
 	})
 }
 
+func validatePKCE(codeVerifier *string, codeChallenge string) bool {
+	// compute S256: base64url(sha256(code_verifier))
+	hash := sha256.Sum256([]byte(*codeVerifier))
+	computedChallenge := base64.RawURLEncoding.EncodeToString(hash[:])
+
+	// compare in constant time with codeChallenge
+	return hmac.Equal([]byte(computedChallenge), []byte(codeChallenge))
+}
+
 /////////////////////
 // High level APIs //
 /////////////////////
@@ -585,4 +628,49 @@ func (auth *Auth) GetTokensByUsername(username string) ([]*Token, error) {
 	return auth.tokenStore.Query(sidb.StoreQueryParams{
 		Grouping: &username,
 	})
+}
+
+func (auth *Auth) RequestAuthCode(clientID string, redirectURI string, codeChallenge *string) (*AuthCode, error) {
+	return auth.GenerateAuthCode(clientID, redirectURI, codeChallenge)
+}
+
+func (auth *Auth) ExchangeAuthCode(code string, clientID string, redirectURI string, codeVerifier *string) (*Token, error) {
+	// 1. Fetch stored auth code
+	authCode, err := auth.codeStore.Get(code)
+	if err != nil {
+		return nil, err
+	}
+	if authCode == nil {
+		return nil, ErrMissingToken
+	}
+	if authCode.Used {
+		return nil, errors.New("code already used")
+	}
+	if time.Now().UnixMilli() > authCode.Expiry {
+		go auth.codeStore.Delete(code)
+		return nil, ErrExpiredToken
+	}
+	if authCode.ClientId != clientID || authCode.RedirectUri != redirectURI {
+		return nil, errors.New("invalid_client_or_redirect")
+	}
+
+	// 2. If PKCE used, validate code_verifier -> code_challenge
+	if authCode.CodeChallenge != nil {
+		if codeVerifier == nil {
+			return nil, errors.New("missing PKCE verifier")
+		}
+		if !validatePKCE(codeVerifier, *authCode.CodeChallenge) {
+			return nil, errors.New("invalid_pkce")
+		}
+	}
+
+	// 3. Mark as used (or delete immediately)
+	go auth.codeStore.Delete(code) // single-use
+
+	// 4. Issue tokens
+	access, err := auth.GenerateToken(authCode.Username) // adjust to shorter expiry
+	if err != nil {
+		return nil, err
+	}
+	return access, nil
 }
