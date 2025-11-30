@@ -1,4 +1,4 @@
-module siauth
+module github.com/germtb/siauth
 
 go 1.24.0
 
