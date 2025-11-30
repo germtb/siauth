@@ -18,11 +18,12 @@ message Token {
 
 message AuthCode {
   string code = 1;
-  string client_id = 2;
-  string redirect_uri = 3;
-  optional string code_challenge = 4;  // for PKCE (S256)
-  int64 expiry = 5;
-  bool used = 6;
+  string username = 2;
+  string client_id = 3;
+  string redirect_uri = 4;
+  optional string code_challenge = 5;  // for PKCE (S256)
+  int64 expiry = 6;
+  bool used = 7;
 }
 
 
@@ -84,18 +85,18 @@ message RequestAuthCodeParams {
 }
 message RequestAuthCodeResult {
   bool success = 1;
-  optional AuthCode auth_code = 2;
+  optional string auth_code = 2;
 }
 
 message ExchangeAuthCodeParams {
   string client_id = 1;
   string redirect_uri = 2;
-  string code = 3;
+  string auth_code = 3;
   optional string code_verifier = 4; // for PKCE (S256)
 }
 message ExchangeAuthCodeResult {
-  optional Token token = 1;
-  optional string error = 2;
+  bool success = 1;
+  optional Token token = 2;
 }
 
 service Auth {

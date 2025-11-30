@@ -48,6 +48,17 @@ func ValidateAuthCookie(r *http.Request, auth *Auth) (*Token, error) {
 	return auth.ValidateToken(cookie.AuthCode)
 }
 
+func GetUsernameFromAuthCookie(r *http.Request, auth *Auth) (string, error) {
+	token, err := ValidateAuthCookie(r, auth)
+	if err != nil {
+		return "", err
+	} else if token == nil {
+		return "", nil
+	}
+
+	return token.Username, nil
+}
+
 func (server *AuthRpcServer) Status(ctx context.Context, req *StatusParams, authCode string) (*StatusResult, error) {
 	token, err := server.Auth.ValidateToken(authCode)
 
@@ -270,17 +281,36 @@ func (s *AuthRpcServer) HandleRpc(w http.ResponseWriter, r *http.Request) {
 				return nil, fmt.Errorf("unauthenticated")
 			}
 
+			username, err := GetUsernameFromAuthCookie(r, s.Auth)
+
 			var requestAuthCodeParams RequestAuthCodeParams
 			if err := proto.Unmarshal(body, &requestAuthCodeParams); err != nil {
 				return nil, err
 			}
-			authCode, err := s.Auth.RequestAuthCode(requestAuthCodeParams.ClientId, requestAuthCodeParams.RedirectUri, requestAuthCodeParams.CodeChallenge)
+			authCode, err := s.Auth.GenerateAuthCode(username, requestAuthCodeParams.ClientId, requestAuthCodeParams.RedirectUri, requestAuthCodeParams.CodeChallenge)
 			if err != nil {
 				return nil, err
 			}
 			result := &RequestAuthCodeResult{
 				Success:  authCode != nil,
-				AuthCode: authCode,
+				AuthCode: &authCode.Code,
+			}
+			return proto.Marshal(result)
+		case "ExchangeAuthCode":
+			var exchangeAuthCodeParams ExchangeAuthCodeParams
+			if err := proto.Unmarshal(body, &exchangeAuthCodeParams); err != nil {
+				return nil, err
+			}
+			token, err := s.Auth.ExchangeAuthCode(exchangeAuthCodeParams.AuthCode, exchangeAuthCodeParams.ClientId, exchangeAuthCodeParams.RedirectUri, exchangeAuthCodeParams.CodeVerifier)
+			if err != nil {
+				return nil, err
+			} else if token == nil {
+				return nil, fmt.Errorf("invalid auth code")
+			}
+
+			result := &ExchangeAuthCodeResult{
+				Success: token != nil,
+				Token:   token,
 			}
 			return proto.Marshal(result)
 		default:

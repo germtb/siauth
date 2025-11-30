@@ -25,6 +25,7 @@ export interface Token {
 
 export interface AuthCode {
   code: string;
+  username: string;
   clientId: string;
   redirectUri: string;
   /** for PKCE (S256) */
@@ -100,20 +101,20 @@ export interface RequestAuthCodeParams {
 
 export interface RequestAuthCodeResult {
   success: boolean;
-  authCode?: AuthCode | undefined;
+  authCode?: string | undefined;
 }
 
 export interface ExchangeAuthCodeParams {
   clientId: string;
   redirectUri: string;
-  code: string;
+  authCode: string;
   /** for PKCE (S256) */
   codeVerifier?: string | undefined;
 }
 
 export interface ExchangeAuthCodeResult {
+  success: boolean;
   token?: Token | undefined;
-  error?: string | undefined;
 }
 
 function createBaseProtoUser(): ProtoUser {
@@ -333,7 +334,7 @@ export const Token: MessageFns<Token> = {
 };
 
 function createBaseAuthCode(): AuthCode {
-  return { code: "", clientId: "", redirectUri: "", codeChallenge: undefined, expiry: 0, used: false };
+  return { code: "", username: "", clientId: "", redirectUri: "", codeChallenge: undefined, expiry: 0, used: false };
 }
 
 export const AuthCode: MessageFns<AuthCode> = {
@@ -341,20 +342,23 @@ export const AuthCode: MessageFns<AuthCode> = {
     if (message.code !== "") {
       writer.uint32(10).string(message.code);
     }
+    if (message.username !== "") {
+      writer.uint32(18).string(message.username);
+    }
     if (message.clientId !== "") {
-      writer.uint32(18).string(message.clientId);
+      writer.uint32(26).string(message.clientId);
     }
     if (message.redirectUri !== "") {
-      writer.uint32(26).string(message.redirectUri);
+      writer.uint32(34).string(message.redirectUri);
     }
     if (message.codeChallenge !== undefined) {
-      writer.uint32(34).string(message.codeChallenge);
+      writer.uint32(42).string(message.codeChallenge);
     }
     if (message.expiry !== 0) {
-      writer.uint32(40).int64(message.expiry);
+      writer.uint32(48).int64(message.expiry);
     }
     if (message.used !== false) {
-      writer.uint32(48).bool(message.used);
+      writer.uint32(56).bool(message.used);
     }
     return writer;
   },
@@ -379,7 +383,7 @@ export const AuthCode: MessageFns<AuthCode> = {
             break;
           }
 
-          message.clientId = reader.string();
+          message.username = reader.string();
           continue;
         }
         case 3: {
@@ -387,7 +391,7 @@ export const AuthCode: MessageFns<AuthCode> = {
             break;
           }
 
-          message.redirectUri = reader.string();
+          message.clientId = reader.string();
           continue;
         }
         case 4: {
@@ -395,19 +399,27 @@ export const AuthCode: MessageFns<AuthCode> = {
             break;
           }
 
-          message.codeChallenge = reader.string();
+          message.redirectUri = reader.string();
           continue;
         }
         case 5: {
-          if (tag !== 40) {
+          if (tag !== 42) {
+            break;
+          }
+
+          message.codeChallenge = reader.string();
+          continue;
+        }
+        case 6: {
+          if (tag !== 48) {
             break;
           }
 
           message.expiry = longToNumber(reader.int64());
           continue;
         }
-        case 6: {
-          if (tag !== 48) {
+        case 7: {
+          if (tag !== 56) {
             break;
           }
 
@@ -426,6 +438,7 @@ export const AuthCode: MessageFns<AuthCode> = {
   fromJSON(object: any): AuthCode {
     return {
       code: isSet(object.code) ? globalThis.String(object.code) : "",
+      username: isSet(object.username) ? globalThis.String(object.username) : "",
       clientId: isSet(object.clientId) ? globalThis.String(object.clientId) : "",
       redirectUri: isSet(object.redirectUri) ? globalThis.String(object.redirectUri) : "",
       codeChallenge: isSet(object.codeChallenge) ? globalThis.String(object.codeChallenge) : undefined,
@@ -438,6 +451,9 @@ export const AuthCode: MessageFns<AuthCode> = {
     const obj: any = {};
     if (message.code !== "") {
       obj.code = message.code;
+    }
+    if (message.username !== "") {
+      obj.username = message.username;
     }
     if (message.clientId !== "") {
       obj.clientId = message.clientId;
@@ -463,6 +479,7 @@ export const AuthCode: MessageFns<AuthCode> = {
   fromPartial<I extends Exact<DeepPartial<AuthCode>, I>>(object: I): AuthCode {
     const message = createBaseAuthCode();
     message.code = object.code ?? "";
+    message.username = object.username ?? "";
     message.clientId = object.clientId ?? "";
     message.redirectUri = object.redirectUri ?? "";
     message.codeChallenge = object.codeChallenge ?? undefined;
@@ -1444,7 +1461,7 @@ export const RequestAuthCodeResult: MessageFns<RequestAuthCodeResult> = {
       writer.uint32(8).bool(message.success);
     }
     if (message.authCode !== undefined) {
-      AuthCode.encode(message.authCode, writer.uint32(18).fork()).join();
+      writer.uint32(18).string(message.authCode);
     }
     return writer;
   },
@@ -1469,7 +1486,7 @@ export const RequestAuthCodeResult: MessageFns<RequestAuthCodeResult> = {
             break;
           }
 
-          message.authCode = AuthCode.decode(reader, reader.uint32());
+          message.authCode = reader.string();
           continue;
         }
       }
@@ -1484,7 +1501,7 @@ export const RequestAuthCodeResult: MessageFns<RequestAuthCodeResult> = {
   fromJSON(object: any): RequestAuthCodeResult {
     return {
       success: isSet(object.success) ? globalThis.Boolean(object.success) : false,
-      authCode: isSet(object.authCode) ? AuthCode.fromJSON(object.authCode) : undefined,
+      authCode: isSet(object.authCode) ? globalThis.String(object.authCode) : undefined,
     };
   },
 
@@ -1494,7 +1511,7 @@ export const RequestAuthCodeResult: MessageFns<RequestAuthCodeResult> = {
       obj.success = message.success;
     }
     if (message.authCode !== undefined) {
-      obj.authCode = AuthCode.toJSON(message.authCode);
+      obj.authCode = message.authCode;
     }
     return obj;
   },
@@ -1505,15 +1522,13 @@ export const RequestAuthCodeResult: MessageFns<RequestAuthCodeResult> = {
   fromPartial<I extends Exact<DeepPartial<RequestAuthCodeResult>, I>>(object: I): RequestAuthCodeResult {
     const message = createBaseRequestAuthCodeResult();
     message.success = object.success ?? false;
-    message.authCode = (object.authCode !== undefined && object.authCode !== null)
-      ? AuthCode.fromPartial(object.authCode)
-      : undefined;
+    message.authCode = object.authCode ?? undefined;
     return message;
   },
 };
 
 function createBaseExchangeAuthCodeParams(): ExchangeAuthCodeParams {
-  return { clientId: "", redirectUri: "", code: "", codeVerifier: undefined };
+  return { clientId: "", redirectUri: "", authCode: "", codeVerifier: undefined };
 }
 
 export const ExchangeAuthCodeParams: MessageFns<ExchangeAuthCodeParams> = {
@@ -1524,8 +1539,8 @@ export const ExchangeAuthCodeParams: MessageFns<ExchangeAuthCodeParams> = {
     if (message.redirectUri !== "") {
       writer.uint32(18).string(message.redirectUri);
     }
-    if (message.code !== "") {
-      writer.uint32(26).string(message.code);
+    if (message.authCode !== "") {
+      writer.uint32(26).string(message.authCode);
     }
     if (message.codeVerifier !== undefined) {
       writer.uint32(34).string(message.codeVerifier);
@@ -1561,7 +1576,7 @@ export const ExchangeAuthCodeParams: MessageFns<ExchangeAuthCodeParams> = {
             break;
           }
 
-          message.code = reader.string();
+          message.authCode = reader.string();
           continue;
         }
         case 4: {
@@ -1585,7 +1600,7 @@ export const ExchangeAuthCodeParams: MessageFns<ExchangeAuthCodeParams> = {
     return {
       clientId: isSet(object.clientId) ? globalThis.String(object.clientId) : "",
       redirectUri: isSet(object.redirectUri) ? globalThis.String(object.redirectUri) : "",
-      code: isSet(object.code) ? globalThis.String(object.code) : "",
+      authCode: isSet(object.authCode) ? globalThis.String(object.authCode) : "",
       codeVerifier: isSet(object.codeVerifier) ? globalThis.String(object.codeVerifier) : undefined,
     };
   },
@@ -1598,8 +1613,8 @@ export const ExchangeAuthCodeParams: MessageFns<ExchangeAuthCodeParams> = {
     if (message.redirectUri !== "") {
       obj.redirectUri = message.redirectUri;
     }
-    if (message.code !== "") {
-      obj.code = message.code;
+    if (message.authCode !== "") {
+      obj.authCode = message.authCode;
     }
     if (message.codeVerifier !== undefined) {
       obj.codeVerifier = message.codeVerifier;
@@ -1614,23 +1629,23 @@ export const ExchangeAuthCodeParams: MessageFns<ExchangeAuthCodeParams> = {
     const message = createBaseExchangeAuthCodeParams();
     message.clientId = object.clientId ?? "";
     message.redirectUri = object.redirectUri ?? "";
-    message.code = object.code ?? "";
+    message.authCode = object.authCode ?? "";
     message.codeVerifier = object.codeVerifier ?? undefined;
     return message;
   },
 };
 
 function createBaseExchangeAuthCodeResult(): ExchangeAuthCodeResult {
-  return { token: undefined, error: undefined };
+  return { success: false, token: undefined };
 }
 
 export const ExchangeAuthCodeResult: MessageFns<ExchangeAuthCodeResult> = {
   encode(message: ExchangeAuthCodeResult, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
-    if (message.token !== undefined) {
-      Token.encode(message.token, writer.uint32(10).fork()).join();
+    if (message.success !== false) {
+      writer.uint32(8).bool(message.success);
     }
-    if (message.error !== undefined) {
-      writer.uint32(18).string(message.error);
+    if (message.token !== undefined) {
+      Token.encode(message.token, writer.uint32(18).fork()).join();
     }
     return writer;
   },
@@ -1643,11 +1658,11 @@ export const ExchangeAuthCodeResult: MessageFns<ExchangeAuthCodeResult> = {
       const tag = reader.uint32();
       switch (tag >>> 3) {
         case 1: {
-          if (tag !== 10) {
+          if (tag !== 8) {
             break;
           }
 
-          message.token = Token.decode(reader, reader.uint32());
+          message.success = reader.bool();
           continue;
         }
         case 2: {
@@ -1655,7 +1670,7 @@ export const ExchangeAuthCodeResult: MessageFns<ExchangeAuthCodeResult> = {
             break;
           }
 
-          message.error = reader.string();
+          message.token = Token.decode(reader, reader.uint32());
           continue;
         }
       }
@@ -1669,18 +1684,18 @@ export const ExchangeAuthCodeResult: MessageFns<ExchangeAuthCodeResult> = {
 
   fromJSON(object: any): ExchangeAuthCodeResult {
     return {
+      success: isSet(object.success) ? globalThis.Boolean(object.success) : false,
       token: isSet(object.token) ? Token.fromJSON(object.token) : undefined,
-      error: isSet(object.error) ? globalThis.String(object.error) : undefined,
     };
   },
 
   toJSON(message: ExchangeAuthCodeResult): unknown {
     const obj: any = {};
+    if (message.success !== false) {
+      obj.success = message.success;
+    }
     if (message.token !== undefined) {
       obj.token = Token.toJSON(message.token);
-    }
-    if (message.error !== undefined) {
-      obj.error = message.error;
     }
     return obj;
   },
@@ -1690,8 +1705,8 @@ export const ExchangeAuthCodeResult: MessageFns<ExchangeAuthCodeResult> = {
   },
   fromPartial<I extends Exact<DeepPartial<ExchangeAuthCodeResult>, I>>(object: I): ExchangeAuthCodeResult {
     const message = createBaseExchangeAuthCodeResult();
+    message.success = object.success ?? false;
     message.token = (object.token !== undefined && object.token !== null) ? Token.fromPartial(object.token) : undefined;
-    message.error = object.error ?? undefined;
     return message;
   },
 };

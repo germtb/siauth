@@ -285,7 +285,7 @@ func (auth *Auth) RegenerateToken(
 	return newToken, nil
 }
 
-func (auth *Auth) GenerateAuthCode(clientID string, redirectURI string, codeChallenge *string) (*AuthCode, error) {
+func (auth *Auth) GenerateAuthCode(username string, clientID string, redirectURI string, codeChallenge *string) (*AuthCode, error) {
 	code, err := generateRandomToken()
 	if err != nil {
 		return nil, err
@@ -294,6 +294,7 @@ func (auth *Auth) GenerateAuthCode(clientID string, redirectURI string, codeChal
 	authCode := &AuthCode{
 		Code:          code,
 		ClientId:      clientID,
+		Username:      username,
 		RedirectUri:   redirectURI,
 		CodeChallenge: codeChallenge,
 		Expiry:        time.Now().Add(5 * time.Minute).UnixMilli(),
@@ -628,10 +629,6 @@ func (auth *Auth) GetTokensByUsername(username string) ([]*Token, error) {
 	return auth.tokenStore.Query(sidb.StoreQueryParams{
 		Grouping: &username,
 	})
-}
-
-func (auth *Auth) RequestAuthCode(clientID string, redirectURI string, codeChallenge *string) (*AuthCode, error) {
-	return auth.GenerateAuthCode(clientID, redirectURI, codeChallenge)
 }
 
 func (auth *Auth) ExchangeAuthCode(code string, clientID string, redirectURI string, codeVerifier *string) (*Token, error) {
