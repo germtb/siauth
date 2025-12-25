@@ -21,7 +21,8 @@ var ErrResetPassword = errors.New("reset password failed")
 
 type AuthRpcServer struct {
 	UnimplementedAuthServer
-	Auth *Auth
+	Auth          *Auth
+	SecureCookies bool // Set to true for HTTPS (production), false for HTTP (local dev)
 }
 
 type AuthCookie struct {
@@ -216,14 +217,18 @@ func (s *AuthRpcServer) HandleRpc(w http.ResponseWriter, r *http.Request) {
 				return nil, ErrSignUp
 			}
 
+			sameSite := http.SameSiteLaxMode
+			if s.SecureCookies {
+				sameSite = http.SameSiteNoneMode
+			}
 			http.SetCookie(w, &http.Cookie{
 				Name:     "token",
 				Value:    token.Code,
 				HttpOnly: true,
 				MaxAge:   3600 * 24 * 7, // 1 week
 				Path:     "/",
-				Secure:   true, // required for SameSite=None
-				SameSite: http.SameSiteNoneMode,
+				Secure:   s.SecureCookies,
+				SameSite: sameSite,
 			})
 
 			return proto.Marshal(result)
@@ -239,14 +244,18 @@ func (s *AuthRpcServer) HandleRpc(w http.ResponseWriter, r *http.Request) {
 				return nil, ErrLogIn
 			}
 
+			sameSite := http.SameSiteLaxMode
+			if s.SecureCookies {
+				sameSite = http.SameSiteNoneMode
+			}
 			http.SetCookie(w, &http.Cookie{
 				Name:     "token",
 				Value:    token.Code,
 				HttpOnly: true,
 				MaxAge:   3600 * 24 * 7, // 1 week
 				Path:     "/",
-				Secure:   true, // required for SameSite=None
-				SameSite: http.SameSiteNoneMode,
+				Secure:   s.SecureCookies,
+				SameSite: sameSite,
 			})
 
 			return proto.Marshal(result)
@@ -267,14 +276,18 @@ func (s *AuthRpcServer) HandleRpc(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if result.Success {
+				sameSite := http.SameSiteLaxMode
+				if s.SecureCookies {
+					sameSite = http.SameSiteNoneMode
+				}
 				http.SetCookie(w, &http.Cookie{
 					Name:     "token",
 					Value:    "",
 					HttpOnly: true,
 					MaxAge:   -1, // Expire the cookie
 					Path:     "/",
-					Secure:   true, // required for SameSite=None
-					SameSite: http.SameSiteNoneMode,
+					Secure:   s.SecureCookies,
+					SameSite: sameSite,
 				})
 			}
 
@@ -385,8 +398,8 @@ func onRpc(w http.ResponseWriter, r *http.Request, handler RpcHandler) {
 	responseBytes, err := handler(rpc_method, body)
 
 	if err != nil {
-		logger.Error("Failed to handle response", "error", err)
-		http.Error(w, "Failed to handle response", http.StatusInternalServerError)
+		logger.Error("Failed to handle response: ", err)
+		http.Error(w, "Failed to handle response: ", http.StatusInternalServerError)
 		return
 	}
 
