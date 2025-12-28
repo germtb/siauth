@@ -27,6 +27,8 @@ const (
 	Auth_ResetPassword_FullMethodName    = "/Auth/ResetPassword"
 	Auth_RequestAuthCode_FullMethodName  = "/Auth/RequestAuthCode"
 	Auth_ExchangeAuthCode_FullMethodName = "/Auth/ExchangeAuthCode"
+	Auth_GetOIDCAuthURL_FullMethodName   = "/Auth/GetOIDCAuthURL"
+	Auth_OIDCLogin_FullMethodName        = "/Auth/OIDCLogin"
 )
 
 // AuthClient is the client API for Auth service.
@@ -41,6 +43,8 @@ type AuthClient interface {
 	ResetPassword(ctx context.Context, in *ResetPasswordParams, opts ...grpc.CallOption) (*ResetPasswordResult, error)
 	RequestAuthCode(ctx context.Context, in *RequestAuthCodeParams, opts ...grpc.CallOption) (*RequestAuthCodeResult, error)
 	ExchangeAuthCode(ctx context.Context, in *ExchangeAuthCodeParams, opts ...grpc.CallOption) (*ExchangeAuthCodeResult, error)
+	GetOIDCAuthURL(ctx context.Context, in *GetOIDCAuthURLParams, opts ...grpc.CallOption) (*GetOIDCAuthURLResult, error)
+	OIDCLogin(ctx context.Context, in *OIDCLoginParams, opts ...grpc.CallOption) (*OIDCLoginResult, error)
 }
 
 type authClient struct {
@@ -131,6 +135,26 @@ func (c *authClient) ExchangeAuthCode(ctx context.Context, in *ExchangeAuthCodeP
 	return out, nil
 }
 
+func (c *authClient) GetOIDCAuthURL(ctx context.Context, in *GetOIDCAuthURLParams, opts ...grpc.CallOption) (*GetOIDCAuthURLResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetOIDCAuthURLResult)
+	err := c.cc.Invoke(ctx, Auth_GetOIDCAuthURL_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authClient) OIDCLogin(ctx context.Context, in *OIDCLoginParams, opts ...grpc.CallOption) (*OIDCLoginResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OIDCLoginResult)
+	err := c.cc.Invoke(ctx, Auth_OIDCLogin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AuthServer is the server API for Auth service.
 // All implementations must embed UnimplementedAuthServer
 // for forward compatibility.
@@ -143,6 +167,8 @@ type AuthServer interface {
 	ResetPassword(context.Context, *ResetPasswordParams) (*ResetPasswordResult, error)
 	RequestAuthCode(context.Context, *RequestAuthCodeParams) (*RequestAuthCodeResult, error)
 	ExchangeAuthCode(context.Context, *ExchangeAuthCodeParams) (*ExchangeAuthCodeResult, error)
+	GetOIDCAuthURL(context.Context, *GetOIDCAuthURLParams) (*GetOIDCAuthURLResult, error)
+	OIDCLogin(context.Context, *OIDCLoginParams) (*OIDCLoginResult, error)
 	mustEmbedUnimplementedAuthServer()
 }
 
@@ -176,6 +202,12 @@ func (UnimplementedAuthServer) RequestAuthCode(context.Context, *RequestAuthCode
 }
 func (UnimplementedAuthServer) ExchangeAuthCode(context.Context, *ExchangeAuthCodeParams) (*ExchangeAuthCodeResult, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ExchangeAuthCode not implemented")
+}
+func (UnimplementedAuthServer) GetOIDCAuthURL(context.Context, *GetOIDCAuthURLParams) (*GetOIDCAuthURLResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetOIDCAuthURL not implemented")
+}
+func (UnimplementedAuthServer) OIDCLogin(context.Context, *OIDCLoginParams) (*OIDCLoginResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method OIDCLogin not implemented")
 }
 func (UnimplementedAuthServer) mustEmbedUnimplementedAuthServer() {}
 func (UnimplementedAuthServer) testEmbeddedByValue()              {}
@@ -342,6 +374,42 @@ func _Auth_ExchangeAuthCode_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Auth_GetOIDCAuthURL_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetOIDCAuthURLParams)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).GetOIDCAuthURL(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_GetOIDCAuthURL_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).GetOIDCAuthURL(ctx, req.(*GetOIDCAuthURLParams))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Auth_OIDCLogin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OIDCLoginParams)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).OIDCLogin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_OIDCLogin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).OIDCLogin(ctx, req.(*OIDCLoginParams))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Auth_ServiceDesc is the grpc.ServiceDesc for Auth service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -380,6 +448,14 @@ var Auth_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExchangeAuthCode",
 			Handler:    _Auth_ExchangeAuthCode_Handler,
+		},
+		{
+			MethodName: "GetOIDCAuthURL",
+			Handler:    _Auth_GetOIDCAuthURL_Handler,
+		},
+		{
+			MethodName: "OIDCLogin",
+			Handler:    _Auth_OIDCLogin_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

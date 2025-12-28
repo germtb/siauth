@@ -1,12 +1,15 @@
 package siauth
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log"
+	"strings"
 	sync "sync"
 	"time"
 
@@ -30,6 +33,10 @@ type Auth struct {
 	mutex      sync.Mutex
 	tokenStore *sidb.Store[*Token]
 	codeStore  *sidb.Store[*AuthCode]
+
+	// OIDC support
+	oidcProviders    map[string]*OIDCProvider
+	oidcUserMappings *OIDCUserMappingStore
 }
 
 func serialize[T proto.Message](msg T) ([]byte, error) {
@@ -66,6 +73,7 @@ func deserializeUser(data []byte) (*ProtoUser, error) {
 func Init(
 	pepper [32]byte,
 	namespace string,
+	oidcProviders ...*OIDCProvider,
 ) (*Auth, error) {
 	tokenDb, err := sidb.Init([]string{namespace}, "tokens")
 
@@ -73,13 +81,26 @@ func Init(
 		return nil, err
 	}
 
+	oidcMappingStore, err := MakeOIDCUserMappingStore(namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build provider map from list
+	oidcProviderMap := make(map[string]*OIDCProvider)
+	for _, provider := range oidcProviders {
+		oidcProviderMap[provider.Name] = provider
+	}
+
 	return &Auth{
-		pepper:     pepper,
-		namespace:  namespace,
-		userDbs:    map[string]*sidb.Store[*ProtoUser]{},
-		tokenStore: sidb.MakeStore(tokenDb, "token", serialize, deserializeToken, nil),
-		codeStore:  sidb.MakeStore(tokenDb, "auth_code", serialize, deserializeAuthCode, nil),
-		mutex:      sync.Mutex{},
+		pepper:           pepper,
+		namespace:        namespace,
+		userDbs:          map[string]*sidb.Store[*ProtoUser]{},
+		tokenStore:       sidb.MakeStore(tokenDb, "token", serialize, deserializeToken, nil),
+		codeStore:        sidb.MakeStore(tokenDb, "auth_code", serialize, deserializeAuthCode, nil),
+		oidcProviders:    oidcProviderMap,
+		oidcUserMappings: oidcMappingStore,
+		mutex:            sync.Mutex{},
 	}, nil
 }
 
@@ -660,4 +681,124 @@ func (auth *Auth) ExchangeAuthCode(code string, clientID string, redirectURI str
 		return nil, err
 	}
 	return access, nil
+}
+
+// LoginWithOIDC performs OIDC login and returns a token
+// Creates user on first login (JIT provisioning)
+func (auth *Auth) LoginWithOIDC(ctx context.Context, provider *OIDCProvider, code string, codeVerifier *string) (*Token, *OIDCUserInfo, error) {
+	// 1. Exchange code for user info
+	userInfo, err := provider.ExchangeCode(ctx, code, codeVerifier)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to exchange OIDC code: %w", err)
+	}
+
+	// Check email verification (security best practice)
+	if !userInfo.EmailVerified && userInfo.Email != "" {
+		logger.Warn("OIDC login with unverified email", "provider", provider.Name, "email", userInfo.Email)
+	}
+
+	// 2. Check if OIDC identity is already mapped
+	username, err := auth.oidcUserMappings.GetUsername(provider.Name, userInfo.Sub)
+	if err != nil && !errors.Is(err, ErrOIDCMappingNotFound) {
+		return nil, nil, err
+	}
+
+	// 3. If not mapped, create new user (JIT provisioning)
+	if username == "" {
+		username = generateUsernameFromEmail(userInfo.Email)
+
+		// Create user without password (OIDC-only account)
+		randomPassword := generateRandomPassword()
+		err := auth.CreateUser(CreateUserParams{
+			Username: username,
+			Password: randomPassword,
+			Email:    &userInfo.Email,
+			Name:     &userInfo.Name,
+		})
+
+		// If username collision, try with suffix
+		if errors.Is(err, ErrUserExists) {
+			for i := 1; i < 100; i++ {
+				username = fmt.Sprintf("%s%d", generateUsernameFromEmail(userInfo.Email), i)
+				err = auth.CreateUser(CreateUserParams{
+					Username: username,
+					Password: randomPassword,
+					Email:    &userInfo.Email,
+					Name:     &userInfo.Name,
+				})
+				if err == nil {
+					break
+				}
+			}
+		}
+
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create user: %w", err)
+		}
+
+		logger.Info("Created user via OIDC JIT provisioning", "provider", provider.Name, "username", username, "email", userInfo.Email)
+
+		// Link OIDC identity to new user
+		err = auth.oidcUserMappings.LinkIdentity(provider.Name, userInfo.Sub, username)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to link OIDC identity: %w", err)
+		}
+	}
+
+	// 4. Generate token
+	token, err := auth.GenerateToken(username)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return token, userInfo, nil
+}
+
+// generateUsernameFromEmail extracts username from email and sanitizes it
+func generateUsernameFromEmail(email string) string {
+	// Extract username from email
+	parts := strings.Split(email, "@")
+	if len(parts) == 0 {
+		return "user_" + generateRandomString(8)
+	}
+
+	username := strings.ToLower(parts[0])
+
+	// Replace invalid chars with underscore
+	username = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			return r
+		}
+		return '_'
+	}, username)
+
+	// Ensure valid length
+	if len(username) < 3 {
+		username = username + "_user"
+	}
+	if len(username) > 20 {
+		username = username[:20]
+	}
+
+	return username
+}
+
+// generateRandomPassword generates a secure random password for OIDC-only accounts
+func generateRandomPassword() string {
+	bytes := make([]byte, 32)
+	secureRandom(bytes)
+	return base64.RawURLEncoding.EncodeToString(bytes)
+}
+
+// generateRandomString generates a random alphanumeric string of given length
+func generateRandomString(length int) string {
+	bytes := make([]byte, length)
+	secureRandom(bytes)
+	return base64.RawURLEncoding.EncodeToString(bytes)[:length]
+}
+
+// secureRandom fills the byte slice with cryptographically secure random bytes
+func secureRandom(bytes []byte) error {
+	_, err := rand.Read(bytes)
+	return err
 }

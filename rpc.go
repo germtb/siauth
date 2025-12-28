@@ -2,6 +2,8 @@ package siauth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -185,6 +187,62 @@ func (server *AuthRpcServer) ResetPassword(ctx context.Context, req *ResetPasswo
 	return &ResetPasswordResult{Success: true}, nil
 }
 
+func (server *AuthRpcServer) GetOIDCAuthURL(ctx context.Context, req *GetOIDCAuthURLParams) (*GetOIDCAuthURLResult, error) {
+	// Look up provider by name
+	provider, ok := server.Auth.oidcProviders[req.ProviderName]
+	if !ok {
+		return &GetOIDCAuthURLResult{Success: false}, fmt.Errorf("OIDC provider '%s' not configured", req.ProviderName)
+	}
+
+	state := req.State
+	if state == nil {
+		// Generate random state for CSRF protection
+		stateBytes := make([]byte, 32)
+		if _, err := rand.Read(stateBytes); err != nil {
+			return &GetOIDCAuthURLResult{Success: false}, err
+		}
+		s := base64.RawURLEncoding.EncodeToString(stateBytes)
+		state = &s
+	}
+
+	authURL := provider.GetAuthCodeURL(*state, req.CodeChallenge)
+
+	return &GetOIDCAuthURLResult{
+		Success: true,
+		AuthUrl: &authURL,
+	}, nil
+}
+
+func (server *AuthRpcServer) OIDCLogin(ctx context.Context, req *OIDCLoginParams) (*OIDCLoginResult, *Token, error) {
+	// Look up provider by name
+	provider, ok := server.Auth.oidcProviders[req.ProviderName]
+	if !ok {
+		return &OIDCLoginResult{Success: false}, nil, fmt.Errorf("OIDC provider '%s' not configured", req.ProviderName)
+	}
+
+	token, userInfo, err := server.Auth.LoginWithOIDC(ctx, provider, req.Code, req.CodeVerifier)
+	if err != nil {
+		logger.Error("OIDC login failed", "provider", req.ProviderName, "error", err)
+		return &OIDCLoginResult{Success: false}, nil, err
+	}
+
+	if token == nil {
+		return &OIDCLoginResult{Success: false}, nil, errors.New("no token generated")
+	}
+
+	username := ""
+	if userInfo != nil {
+		logger.Info("OIDC login successful", "provider", req.ProviderName, "email", userInfo.Email, "username", token.Username)
+		username = token.Username
+	}
+
+	return &OIDCLoginResult{
+		Success:  true,
+		Token:    token,
+		Username: &username,
+	}, token, nil
+}
+
 func (s *AuthRpcServer) HandleRpc(w http.ResponseWriter, r *http.Request) {
 	onRpc(w, r, func(rpc_method string, body []byte) ([]byte, error) {
 		logger.Info("Handling auth RPC method", "method", rpc_method)
@@ -357,6 +415,47 @@ func (s *AuthRpcServer) HandleRpc(w http.ResponseWriter, r *http.Request) {
 				Token:   token,
 			}
 			return proto.Marshal(result)
+
+		case "GetOIDCAuthURL":
+			var getAuthURLParams GetOIDCAuthURLParams
+			if err := proto.Unmarshal(body, &getAuthURLParams); err != nil {
+				return nil, err
+			}
+			result, err := s.GetOIDCAuthURL(r.Context(), &getAuthURLParams)
+			if err != nil {
+				return nil, err
+			}
+			return proto.Marshal(result)
+
+		case "OIDCLogin":
+			var oidcLoginParams OIDCLoginParams
+			if err := proto.Unmarshal(body, &oidcLoginParams); err != nil {
+				return nil, err
+			}
+			result, token, err := s.OIDCLogin(r.Context(), &oidcLoginParams)
+			if err != nil {
+				return nil, err
+			}
+
+			// Set cookie if token was generated (same pattern as Login/Signup)
+			if token != nil {
+				sameSite := http.SameSiteLaxMode
+				if s.SecureCookies {
+					sameSite = http.SameSiteNoneMode
+				}
+				http.SetCookie(w, &http.Cookie{
+					Name:     "token",
+					Value:    token.Code,
+					HttpOnly: true,
+					MaxAge:   3600 * 24 * 7, // 1 week
+					Path:     "/",
+					Secure:   s.SecureCookies,
+					SameSite: sameSite,
+				})
+			}
+
+			return proto.Marshal(result)
+
 		default:
 			return nil, errors.New("unknown RPC method: " + rpc_method)
 		}

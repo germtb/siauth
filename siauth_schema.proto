@@ -26,6 +26,13 @@ message AuthCode {
   bool used = 7;
 }
 
+message ProtoOIDCUserMapping {
+  string provider_name = 1;
+  string provider_sub = 2;
+  string username = 3;
+  int64 created_at = 4;
+}
+
 
 message StatusParams {}
 
@@ -99,6 +106,27 @@ message ExchangeAuthCodeResult {
   optional Token token = 2;
 }
 
+message GetOIDCAuthURLParams {
+  string provider_name = 1;
+  optional string state = 2;
+  optional string code_challenge = 3;  // PKCE
+}
+message GetOIDCAuthURLResult {
+  bool success = 1;
+  optional string auth_url = 2;
+}
+
+message OIDCLoginParams {
+  string provider_name = 1;
+  string code = 2;
+  optional string code_verifier = 3;  // PKCE
+}
+message OIDCLoginResult {
+  bool success = 1;
+  optional Token token = 2;
+  optional string username = 3;
+}
+
 service Auth {
     rpc Status (StatusParams) returns (StatusResult) {}
     rpc Signup (SignupParams) returns (SignupResult) {}
@@ -108,4 +136,6 @@ service Auth {
     rpc ResetPassword (ResetPasswordParams) returns (ResetPasswordResult) {}
     rpc RequestAuthCode (RequestAuthCodeParams) returns (RequestAuthCodeResult) {}
     rpc ExchangeAuthCode (ExchangeAuthCodeParams) returns (ExchangeAuthCodeResult) {}
+    rpc GetOIDCAuthURL (GetOIDCAuthURLParams) returns (GetOIDCAuthURLResult) {}
+    rpc OIDCLogin (OIDCLoginParams) returns (OIDCLoginResult) {}
 }

@@ -34,6 +34,13 @@ export interface AuthCode {
   used: boolean;
 }
 
+export interface ProtoOIDCUserMapping {
+  providerName: string;
+  providerSub: string;
+  username: string;
+  createdAt: number;
+}
+
 export interface StatusParams {
 }
 
@@ -115,6 +122,33 @@ export interface ExchangeAuthCodeParams {
 export interface ExchangeAuthCodeResult {
   success: boolean;
   token?: Token | undefined;
+}
+
+export interface GetOIDCAuthURLParams {
+  providerName: string;
+  state?:
+    | string
+    | undefined;
+  /** PKCE */
+  codeChallenge?: string | undefined;
+}
+
+export interface GetOIDCAuthURLResult {
+  success: boolean;
+  authUrl?: string | undefined;
+}
+
+export interface OIDCLoginParams {
+  providerName: string;
+  code: string;
+  /** PKCE */
+  codeVerifier?: string | undefined;
+}
+
+export interface OIDCLoginResult {
+  success: boolean;
+  token?: Token | undefined;
+  username?: string | undefined;
 }
 
 function createBaseProtoUser(): ProtoUser {
@@ -485,6 +519,114 @@ export const AuthCode: MessageFns<AuthCode> = {
     message.codeChallenge = object.codeChallenge ?? undefined;
     message.expiry = object.expiry ?? 0;
     message.used = object.used ?? false;
+    return message;
+  },
+};
+
+function createBaseProtoOIDCUserMapping(): ProtoOIDCUserMapping {
+  return { providerName: "", providerSub: "", username: "", createdAt: 0 };
+}
+
+export const ProtoOIDCUserMapping: MessageFns<ProtoOIDCUserMapping> = {
+  encode(message: ProtoOIDCUserMapping, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.providerName !== "") {
+      writer.uint32(10).string(message.providerName);
+    }
+    if (message.providerSub !== "") {
+      writer.uint32(18).string(message.providerSub);
+    }
+    if (message.username !== "") {
+      writer.uint32(26).string(message.username);
+    }
+    if (message.createdAt !== 0) {
+      writer.uint32(32).int64(message.createdAt);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ProtoOIDCUserMapping {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseProtoOIDCUserMapping();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.providerName = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.providerSub = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.username = reader.string();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.createdAt = longToNumber(reader.int64());
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): ProtoOIDCUserMapping {
+    return {
+      providerName: isSet(object.providerName) ? globalThis.String(object.providerName) : "",
+      providerSub: isSet(object.providerSub) ? globalThis.String(object.providerSub) : "",
+      username: isSet(object.username) ? globalThis.String(object.username) : "",
+      createdAt: isSet(object.createdAt) ? globalThis.Number(object.createdAt) : 0,
+    };
+  },
+
+  toJSON(message: ProtoOIDCUserMapping): unknown {
+    const obj: any = {};
+    if (message.providerName !== "") {
+      obj.providerName = message.providerName;
+    }
+    if (message.providerSub !== "") {
+      obj.providerSub = message.providerSub;
+    }
+    if (message.username !== "") {
+      obj.username = message.username;
+    }
+    if (message.createdAt !== 0) {
+      obj.createdAt = Math.round(message.createdAt);
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<ProtoOIDCUserMapping>, I>>(base?: I): ProtoOIDCUserMapping {
+    return ProtoOIDCUserMapping.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<ProtoOIDCUserMapping>, I>>(object: I): ProtoOIDCUserMapping {
+    const message = createBaseProtoOIDCUserMapping();
+    message.providerName = object.providerName ?? "";
+    message.providerSub = object.providerSub ?? "";
+    message.username = object.username ?? "";
+    message.createdAt = object.createdAt ?? 0;
     return message;
   },
 };
@@ -1711,6 +1853,358 @@ export const ExchangeAuthCodeResult: MessageFns<ExchangeAuthCodeResult> = {
   },
 };
 
+function createBaseGetOIDCAuthURLParams(): GetOIDCAuthURLParams {
+  return { providerName: "", state: undefined, codeChallenge: undefined };
+}
+
+export const GetOIDCAuthURLParams: MessageFns<GetOIDCAuthURLParams> = {
+  encode(message: GetOIDCAuthURLParams, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.providerName !== "") {
+      writer.uint32(10).string(message.providerName);
+    }
+    if (message.state !== undefined) {
+      writer.uint32(18).string(message.state);
+    }
+    if (message.codeChallenge !== undefined) {
+      writer.uint32(26).string(message.codeChallenge);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetOIDCAuthURLParams {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetOIDCAuthURLParams();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.providerName = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.state = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.codeChallenge = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): GetOIDCAuthURLParams {
+    return {
+      providerName: isSet(object.providerName) ? globalThis.String(object.providerName) : "",
+      state: isSet(object.state) ? globalThis.String(object.state) : undefined,
+      codeChallenge: isSet(object.codeChallenge) ? globalThis.String(object.codeChallenge) : undefined,
+    };
+  },
+
+  toJSON(message: GetOIDCAuthURLParams): unknown {
+    const obj: any = {};
+    if (message.providerName !== "") {
+      obj.providerName = message.providerName;
+    }
+    if (message.state !== undefined) {
+      obj.state = message.state;
+    }
+    if (message.codeChallenge !== undefined) {
+      obj.codeChallenge = message.codeChallenge;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<GetOIDCAuthURLParams>, I>>(base?: I): GetOIDCAuthURLParams {
+    return GetOIDCAuthURLParams.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<GetOIDCAuthURLParams>, I>>(object: I): GetOIDCAuthURLParams {
+    const message = createBaseGetOIDCAuthURLParams();
+    message.providerName = object.providerName ?? "";
+    message.state = object.state ?? undefined;
+    message.codeChallenge = object.codeChallenge ?? undefined;
+    return message;
+  },
+};
+
+function createBaseGetOIDCAuthURLResult(): GetOIDCAuthURLResult {
+  return { success: false, authUrl: undefined };
+}
+
+export const GetOIDCAuthURLResult: MessageFns<GetOIDCAuthURLResult> = {
+  encode(message: GetOIDCAuthURLResult, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.success !== false) {
+      writer.uint32(8).bool(message.success);
+    }
+    if (message.authUrl !== undefined) {
+      writer.uint32(18).string(message.authUrl);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): GetOIDCAuthURLResult {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseGetOIDCAuthURLResult();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.success = reader.bool();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.authUrl = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): GetOIDCAuthURLResult {
+    return {
+      success: isSet(object.success) ? globalThis.Boolean(object.success) : false,
+      authUrl: isSet(object.authUrl) ? globalThis.String(object.authUrl) : undefined,
+    };
+  },
+
+  toJSON(message: GetOIDCAuthURLResult): unknown {
+    const obj: any = {};
+    if (message.success !== false) {
+      obj.success = message.success;
+    }
+    if (message.authUrl !== undefined) {
+      obj.authUrl = message.authUrl;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<GetOIDCAuthURLResult>, I>>(base?: I): GetOIDCAuthURLResult {
+    return GetOIDCAuthURLResult.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<GetOIDCAuthURLResult>, I>>(object: I): GetOIDCAuthURLResult {
+    const message = createBaseGetOIDCAuthURLResult();
+    message.success = object.success ?? false;
+    message.authUrl = object.authUrl ?? undefined;
+    return message;
+  },
+};
+
+function createBaseOIDCLoginParams(): OIDCLoginParams {
+  return { providerName: "", code: "", codeVerifier: undefined };
+}
+
+export const OIDCLoginParams: MessageFns<OIDCLoginParams> = {
+  encode(message: OIDCLoginParams, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.providerName !== "") {
+      writer.uint32(10).string(message.providerName);
+    }
+    if (message.code !== "") {
+      writer.uint32(18).string(message.code);
+    }
+    if (message.codeVerifier !== undefined) {
+      writer.uint32(26).string(message.codeVerifier);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): OIDCLoginParams {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseOIDCLoginParams();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.providerName = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.code = reader.string();
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.codeVerifier = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): OIDCLoginParams {
+    return {
+      providerName: isSet(object.providerName) ? globalThis.String(object.providerName) : "",
+      code: isSet(object.code) ? globalThis.String(object.code) : "",
+      codeVerifier: isSet(object.codeVerifier) ? globalThis.String(object.codeVerifier) : undefined,
+    };
+  },
+
+  toJSON(message: OIDCLoginParams): unknown {
+    const obj: any = {};
+    if (message.providerName !== "") {
+      obj.providerName = message.providerName;
+    }
+    if (message.code !== "") {
+      obj.code = message.code;
+    }
+    if (message.codeVerifier !== undefined) {
+      obj.codeVerifier = message.codeVerifier;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<OIDCLoginParams>, I>>(base?: I): OIDCLoginParams {
+    return OIDCLoginParams.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<OIDCLoginParams>, I>>(object: I): OIDCLoginParams {
+    const message = createBaseOIDCLoginParams();
+    message.providerName = object.providerName ?? "";
+    message.code = object.code ?? "";
+    message.codeVerifier = object.codeVerifier ?? undefined;
+    return message;
+  },
+};
+
+function createBaseOIDCLoginResult(): OIDCLoginResult {
+  return { success: false, token: undefined, username: undefined };
+}
+
+export const OIDCLoginResult: MessageFns<OIDCLoginResult> = {
+  encode(message: OIDCLoginResult, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.success !== false) {
+      writer.uint32(8).bool(message.success);
+    }
+    if (message.token !== undefined) {
+      Token.encode(message.token, writer.uint32(18).fork()).join();
+    }
+    if (message.username !== undefined) {
+      writer.uint32(26).string(message.username);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): OIDCLoginResult {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    let end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseOIDCLoginResult();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 8) {
+            break;
+          }
+
+          message.success = reader.bool();
+          continue;
+        }
+        case 2: {
+          if (tag !== 18) {
+            break;
+          }
+
+          message.token = Token.decode(reader, reader.uint32());
+          continue;
+        }
+        case 3: {
+          if (tag !== 26) {
+            break;
+          }
+
+          message.username = reader.string();
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  fromJSON(object: any): OIDCLoginResult {
+    return {
+      success: isSet(object.success) ? globalThis.Boolean(object.success) : false,
+      token: isSet(object.token) ? Token.fromJSON(object.token) : undefined,
+      username: isSet(object.username) ? globalThis.String(object.username) : undefined,
+    };
+  },
+
+  toJSON(message: OIDCLoginResult): unknown {
+    const obj: any = {};
+    if (message.success !== false) {
+      obj.success = message.success;
+    }
+    if (message.token !== undefined) {
+      obj.token = Token.toJSON(message.token);
+    }
+    if (message.username !== undefined) {
+      obj.username = message.username;
+    }
+    return obj;
+  },
+
+  create<I extends Exact<DeepPartial<OIDCLoginResult>, I>>(base?: I): OIDCLoginResult {
+    return OIDCLoginResult.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<OIDCLoginResult>, I>>(object: I): OIDCLoginResult {
+    const message = createBaseOIDCLoginResult();
+    message.success = object.success ?? false;
+    message.token = (object.token !== undefined && object.token !== null) ? Token.fromPartial(object.token) : undefined;
+    message.username = object.username ?? undefined;
+    return message;
+  },
+};
+
 export interface Auth {
   Status(request: StatusParams): Promise<StatusResult>;
   Signup(request: SignupParams): Promise<SignupResult>;
@@ -1720,6 +2214,8 @@ export interface Auth {
   ResetPassword(request: ResetPasswordParams): Promise<ResetPasswordResult>;
   RequestAuthCode(request: RequestAuthCodeParams): Promise<RequestAuthCodeResult>;
   ExchangeAuthCode(request: ExchangeAuthCodeParams): Promise<ExchangeAuthCodeResult>;
+  GetOIDCAuthURL(request: GetOIDCAuthURLParams): Promise<GetOIDCAuthURLResult>;
+  OIDCLogin(request: OIDCLoginParams): Promise<OIDCLoginResult>;
 }
 
 export const AuthServiceName = "Auth";
@@ -1737,6 +2233,8 @@ export class AuthClientImpl implements Auth {
     this.ResetPassword = this.ResetPassword.bind(this);
     this.RequestAuthCode = this.RequestAuthCode.bind(this);
     this.ExchangeAuthCode = this.ExchangeAuthCode.bind(this);
+    this.GetOIDCAuthURL = this.GetOIDCAuthURL.bind(this);
+    this.OIDCLogin = this.OIDCLogin.bind(this);
   }
   Status(request: StatusParams): Promise<StatusResult> {
     const data = StatusParams.encode(request).finish();
@@ -1784,6 +2282,18 @@ export class AuthClientImpl implements Auth {
     const data = ExchangeAuthCodeParams.encode(request).finish();
     const promise = this.rpc.request(this.service, "ExchangeAuthCode", data);
     return promise.then((data) => ExchangeAuthCodeResult.decode(new BinaryReader(data)));
+  }
+
+  GetOIDCAuthURL(request: GetOIDCAuthURLParams): Promise<GetOIDCAuthURLResult> {
+    const data = GetOIDCAuthURLParams.encode(request).finish();
+    const promise = this.rpc.request(this.service, "GetOIDCAuthURL", data);
+    return promise.then((data) => GetOIDCAuthURLResult.decode(new BinaryReader(data)));
+  }
+
+  OIDCLogin(request: OIDCLoginParams): Promise<OIDCLoginResult> {
+    const data = OIDCLoginParams.encode(request).finish();
+    const promise = this.rpc.request(this.service, "OIDCLogin", data);
+    return promise.then((data) => OIDCLoginResult.decode(new BinaryReader(data)));
   }
 }
 

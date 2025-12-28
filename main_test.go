@@ -320,10 +320,12 @@ func TestRefreshToken(t *testing.T) {
 
 	time.Sleep(1 * time.Second) // Ensure time has passed for expiry comparison
 
-	err = auth.RefreshToken(token.Code)
+	// Note: RefreshToken method doesn't exist - ValidateToken auto-refreshes
+	// err = auth.RefreshToken(token.Code)
+	_, err = auth.ValidateToken(token.Code)
 
 	if err != nil {
-		t.Fatalf("RefreshToken failed: %v", err)
+		t.Fatalf("ValidateToken failed: %v", err)
 	}
 
 	refreshedToken, err := auth.tokenStore.Get(token.Code)
@@ -358,7 +360,8 @@ func TestRefreshMissingToken(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 
-	err = auth.RefreshToken("invalidtokenvalue")
+	// Note: RefreshToken method doesn't exist - using ValidateToken instead
+	_, err = auth.ValidateToken("invalidtokenvalue")
 
 	if err != ErrMissingToken {
 		t.Fatalf("Expected ErrMissingToken, got: %v", err)
@@ -756,4 +759,338 @@ func TestCreateUserWithInvalidName(t *testing.T) {
 		t.Fatalf("Expected ErrInvalidUsername, got: %v", err)
 	}
 
+}
+
+// OIDC Integration Tests
+
+func TestGenerateUsernameFromEmail(t *testing.T) {
+	tests := []struct {
+		email    string
+		expected string
+	}{
+		{"john.doe@example.com", "john_doe"},
+		{"alice+tag@gmail.com", "alice_tag"},
+		{"bob-smith@company.co.uk", "bob_smith"},
+		{"user123@test.org", "user123"},
+		{"a@b.com", "a_user"},                    // Too short, padded
+		{"verylongemailaddressusername@test.com", "verylongemailaddress"}, // Truncated to 20
+		{"UPPERCASE@test.com", "uppercase"},
+		{"with spaces@test.com", "with_spaces"},
+		{"special!@#chars@test.com", "special_"},  // Special chars replaced with single _
+	}
+
+	for _, tt := range tests {
+		result := generateUsernameFromEmail(tt.email)
+		if result != tt.expected {
+			t.Errorf("generateUsernameFromEmail(%s) = %s, want %s",
+				tt.email, result, tt.expected)
+		}
+
+		// Verify result is valid username
+		if !validateUsername(result) {
+			t.Errorf("generateUsernameFromEmail(%s) produced invalid username: %s",
+				tt.email, result)
+		}
+	}
+}
+
+func TestGenerateRandomPassword(t *testing.T) {
+	password1 := generateRandomPassword()
+	password2 := generateRandomPassword()
+
+	// Should be non-empty
+	if len(password1) == 0 || len(password2) == 0 {
+		t.Error("Generated password should not be empty")
+	}
+
+	// Should be base64url encoded (no padding)
+	if password1[len(password1)-1] == '=' || password2[len(password2)-1] == '=' {
+		t.Error("Random password should not contain padding")
+	}
+
+	// Should be unique
+	if password1 == password2 {
+		t.Error("Random passwords should be unique")
+	}
+
+	// Should be reasonably long
+	if len(password1) < 40 {
+		t.Errorf("Random password too short: %d chars", len(password1))
+	}
+}
+
+func TestOIDCUserMappingIntegration(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_oidc_integration"
+
+	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Create a user
+	err = auth.CreateUser(CreateUserParams{
+		Username: "testuser",
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+
+	// Link OIDC identity to the user
+	err = auth.oidcUserMappings.LinkIdentity("google", "google_sub_123", "testuser")
+	if err != nil {
+		t.Fatalf("Failed to link identity: %v", err)
+	}
+
+	// Verify mapping exists
+	username, err := auth.oidcUserMappings.GetUsername("google", "google_sub_123")
+	if err != nil {
+		t.Fatalf("Failed to get username: %v", err)
+	}
+
+	if username != "testuser" {
+		t.Errorf("Expected username 'testuser', got '%s'", username)
+	}
+
+	// Get all identities for user
+	identities, err := auth.oidcUserMappings.GetIdentities("testuser")
+	if err != nil {
+		t.Fatalf("Failed to get identities: %v", err)
+	}
+
+	if len(identities) != 1 {
+		t.Errorf("Expected 1 identity, got %d", len(identities))
+	}
+
+	if identities[0].ProviderName != "google" || identities[0].ProviderSub != "google_sub_123" {
+		t.Error("Identity details don't match")
+	}
+}
+
+func TestJITUserProvisioningSimulation(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_jit_provisioning"
+
+	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Simulate JIT provisioning for new OIDC user
+	email := "newuser@gmail.com"
+	username := generateUsernameFromEmail(email)
+	randomPassword := generateRandomPassword()
+
+	// Create user with random password (OIDC-only account)
+	err = auth.CreateUser(CreateUserParams{
+		Username: username,
+		Password: randomPassword,
+		Email:    &email,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create JIT user: %v", err)
+	}
+
+	// Link OIDC identity
+	err = auth.oidcUserMappings.LinkIdentity("google", "new_google_sub", username)
+	if err != nil {
+		t.Fatalf("Failed to link OIDC identity: %v", err)
+	}
+
+	// Verify user was created
+	store, err := auth.GetUserStore(username)
+	if err != nil {
+		t.Fatalf("Failed to get user store: %v", err)
+	}
+
+	user, err := store.Get(username)
+	if err != nil {
+		t.Fatalf("Failed to get user: %v", err)
+	}
+
+	if user == nil {
+		t.Fatal("User not found after JIT provisioning")
+	}
+
+	if user.Email == nil || *user.Email != email {
+		t.Errorf("User email not set correctly")
+	}
+
+	// Verify token can be generated for JIT user
+	token, err := auth.GenerateToken(username)
+	if err != nil {
+		t.Fatalf("Failed to generate token for JIT user: %v", err)
+	}
+
+	if token == nil {
+		t.Fatal("Token is nil")
+	}
+
+	if token.Username != username {
+		t.Errorf("Expected token username '%s', got '%s'", username, token.Username)
+	}
+}
+
+func TestUsernameCollisionHandling(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_collision"
+
+	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Create a user with the base username
+	baseUsername := "john_doe"
+	err = auth.CreateUser(CreateUserParams{
+		Username: baseUsername,
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create base user: %v", err)
+	}
+
+	// Simulate collision - try to create user with same username
+	email := "john.doe@newcompany.com"
+	username := generateUsernameFromEmail(email)
+
+	if username != baseUsername {
+		t.Fatalf("Expected username collision scenario, got different usernames")
+	}
+
+	// First attempt should fail
+	err = auth.CreateUser(CreateUserParams{
+		Username: username,
+		Password: "password456",
+	})
+	if err != ErrUserExists {
+		t.Fatalf("Expected ErrUserExists, got %v", err)
+	}
+
+	// Try with suffix (simulating collision resolution)
+	usernameWithSuffix := username + "1"
+	err = auth.CreateUser(CreateUserParams{
+		Username: usernameWithSuffix,
+		Password: "password456",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create user with suffix: %v", err)
+	}
+
+	// Verify both users exist
+	store1, _ := auth.GetUserStore(baseUsername)
+	user1, _ := store1.Get(baseUsername)
+	if user1 == nil {
+		t.Error("Base user not found")
+	}
+
+	store2, _ := auth.GetUserStore(usernameWithSuffix)
+	user2, _ := store2.Get(usernameWithSuffix)
+	if user2 == nil {
+		t.Error("User with suffix not found")
+	}
+}
+
+func TestMultipleOIDCProvidersForSameUser(t *testing.T) {
+	pepper := [32]byte{}
+	namespace := "test_multiple_providers"
+
+	auth, err := Init(pepper, namespace)
+	defer Cleanup(auth)
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	// Create user
+	username := "multiuser"
+	err = auth.CreateUser(CreateUserParams{
+		Username: username,
+		Password: "password123",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create user: %v", err)
+	}
+
+	// Link multiple OIDC providers to same user
+	providers := []struct {
+		provider string
+		sub      string
+	}{
+		{"google", "google_123"},
+		{"github", "github_456"},
+		{"okta", "okta_789"},
+	}
+
+	for _, p := range providers {
+		err = auth.oidcUserMappings.LinkIdentity(p.provider, p.sub, username)
+		if err != nil {
+			t.Fatalf("Failed to link %s identity: %v", p.provider, err)
+		}
+	}
+
+	// Verify all mappings
+	for _, p := range providers {
+		retrievedUsername, err := auth.oidcUserMappings.GetUsername(p.provider, p.sub)
+		if err != nil {
+			t.Fatalf("Failed to get username for %s: %v", p.provider, err)
+		}
+		if retrievedUsername != username {
+			t.Errorf("Expected username '%s' for %s, got '%s'",
+				username, p.provider, retrievedUsername)
+		}
+	}
+
+	// Get all identities for user
+	identities, err := auth.oidcUserMappings.GetIdentities(username)
+	if err != nil {
+		t.Fatalf("Failed to get identities: %v", err)
+	}
+
+	if len(identities) != 3 {
+		t.Errorf("Expected 3 identities, got %d", len(identities))
+	}
+}
+
+func TestSecureRandomGeneration(t *testing.T) {
+	// Test secure random generation
+	bytes1 := make([]byte, 32)
+	bytes2 := make([]byte, 32)
+
+	err := secureRandom(bytes1)
+	if err != nil {
+		t.Fatalf("secureRandom failed: %v", err)
+	}
+
+	err = secureRandom(bytes2)
+	if err != nil {
+		t.Fatalf("secureRandom failed: %v", err)
+	}
+
+	// Should not be all zeros
+	allZeros := true
+	for _, b := range bytes1 {
+		if b != 0 {
+			allZeros = false
+			break
+		}
+	}
+	if allZeros {
+		t.Error("secureRandom generated all zeros")
+	}
+
+	// Should be different
+	same := true
+	for i := range bytes1 {
+		if bytes1[i] != bytes2[i] {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Error("secureRandom generated identical values")
+	}
 }
