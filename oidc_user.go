@@ -30,7 +30,7 @@ func MakeOIDCUserMappingStore(namespace string) (*OIDCUserMappingStore, error) {
 		return nil, err
 	}
 
-	store := sidb.MakeStore(db, "oidc_mapping", serialize, deserializeOIDCMapping, nil)
+	store := sidb.MakeStore(db, "oidc_mapping", serialize, deserializeOIDCMapping, nil, nil)
 
 	return &OIDCUserMappingStore{
 		store: store,
@@ -74,10 +74,9 @@ func (s *OIDCUserMappingStore) GetUsername(providerName, providerSub string) (st
 func (s *OIDCUserMappingStore) GetIdentities(username string) ([]*OIDCUserMapping, error) {
 	// Query all mappings - sidb doesn't have reverse lookup, so we scan all
 	// This is acceptable as the number of mappings per user is typically small
-	entries, err := s.store.Query(sidb.StoreQueryParams{
-		Limit:  func() *int { l := 1000; return &l }(), // Reasonable upper bound
-		Offset: func() *int { o := 0; return &o }(),
-	})
+	entries, err := s.store.Query().
+		Limit(1000). // Reasonable upper bound
+		Exec()
 
 	if err != nil {
 		return nil, err

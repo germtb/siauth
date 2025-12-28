@@ -96,8 +96,8 @@ func Init(
 		pepper:           pepper,
 		namespace:        namespace,
 		userDbs:          map[string]*sidb.Store[*ProtoUser]{},
-		tokenStore:       sidb.MakeStore(tokenDb, "token", serialize, deserializeToken, nil),
-		codeStore:        sidb.MakeStore(tokenDb, "auth_code", serialize, deserializeAuthCode, nil),
+		tokenStore:       sidb.MakeStore(tokenDb, "token", serialize, deserializeToken, nil, nil),
+		codeStore:        sidb.MakeStore(tokenDb, "auth_code", serialize, deserializeAuthCode, nil, nil),
 		oidcProviders:    oidcProviderMap,
 		oidcUserMappings: oidcMappingStore,
 		mutex:            sync.Mutex{},
@@ -144,7 +144,7 @@ func (auth *Auth) GetUserStore(username string) (*sidb.Store[*ProtoUser], error)
 		return nil, err
 	}
 
-	store = sidb.MakeStore(db, "user", serialize, deserializeUser, nil)
+	store = sidb.MakeStore(db, "user", serialize, deserializeUser, nil, nil)
 
 	auth.mutex.Lock()
 	existingStore, ok := auth.userDbs[username]
@@ -637,9 +637,9 @@ func (auth *Auth) ResetPasswordAndGenerateToken(username string, newPassword str
 }
 
 func (auth *Auth) GetTokensByUsername(username string) ([]*Token, error) {
-	return auth.tokenStore.Query(sidb.StoreQueryParams{
-		Grouping: &username,
-	})
+	return auth.tokenStore.Query().
+		Grouping(username).
+		Exec()
 }
 
 func (auth *Auth) ExchangeAuthCode(code string, clientID string, redirectURI string, codeVerifier *string) (*Token, error) {
