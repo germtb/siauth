@@ -29,7 +29,7 @@ type User struct {
 type Auth struct {
 	pepper     [32]byte
 	namespace  string
-	userDbs    map[string]*sidb.Store[*ProtoUser]
+	userDbs    map[string]*sidb.Database
 	mutex      sync.Mutex
 	tokenStore *sidb.Store[*Token]
 	codeStore  *sidb.Store[*AuthCode]
@@ -95,7 +95,7 @@ func Init(
 	return &Auth{
 		pepper:           pepper,
 		namespace:        namespace,
-		userDbs:          map[string]*sidb.Store[*ProtoUser]{},
+		userDbs:          map[string]*sidb.Database{},
 		tokenStore:       sidb.MakeStore(tokenDb, "token", serialize, deserializeToken, nil, nil),
 		codeStore:        sidb.MakeStore(tokenDb, "auth_code", serialize, deserializeAuthCode, nil, nil),
 		oidcProviders:    oidcProviderMap,
@@ -129,13 +129,13 @@ type CreateUserParams struct {
 
 var ErrUserExists = errors.New("user already exists")
 
-func (auth *Auth) GetUserStore(username string) (*sidb.Store[*ProtoUser], error) {
+func (auth *Auth) GetUserDatabase(username string) (*sidb.Database, error) {
 	auth.mutex.Lock()
-	store, ok := auth.userDbs[username]
+	db, ok := auth.userDbs[username]
 	auth.mutex.Unlock()
 
 	if ok {
-		return store, nil
+		return db, nil
 	}
 
 	db, err := sidb.Init([]string{auth.namespace, "users"}, username)
@@ -144,17 +144,25 @@ func (auth *Auth) GetUserStore(username string) (*sidb.Store[*ProtoUser], error)
 		return nil, err
 	}
 
-	store = sidb.MakeStore(db, "user", serialize, deserializeUser, nil, nil)
-
 	auth.mutex.Lock()
-	existingStore, ok := auth.userDbs[username]
+	existingDb, ok := auth.userDbs[username]
 	if !ok {
-		auth.userDbs[username] = store
-		existingStore = store
+		auth.userDbs[username] = db
+		existingDb = db
 	}
 	auth.mutex.Unlock()
 
-	return existingStore, nil
+	return existingDb, nil
+}
+
+func (auth *Auth) GetUserStore(username string) (*sidb.Store[*ProtoUser], error) {
+	db, err := auth.GetUserDatabase(username)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return sidb.MakeStore(db, "user", serialize, deserializeUser, nil, nil), nil
 }
 
 func validateUsername(username string) bool {
