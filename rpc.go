@@ -96,14 +96,12 @@ func GetUsernameFromAuthToken(r *http.Request, auth *Auth) (string, error) {
 func (server *AuthRpcServer) Status(ctx context.Context, req *StatusParams, authCode string) (*StatusResult, error) {
 	token, err := server.Auth.ValidateToken(authCode)
 
-	if err != nil {
-		return &StatusResult{IsAuthenticated: false}, err
-	} else if token == nil {
+	if err != nil || token == nil {
 		return &StatusResult{IsAuthenticated: false}, nil
-	} else {
-		logger.Info("Authenticated user: ", token.Username)
-		return &StatusResult{IsAuthenticated: true, Username: token.Username}, nil
 	}
+
+	logger.Info("Authenticated user: ", token.Username)
+	return &StatusResult{IsAuthenticated: true, Username: token.Username}, nil
 }
 
 func isValidUsername(username string) bool {
@@ -253,10 +251,8 @@ func (s *AuthRpcServer) HandleRpc(w http.ResponseWriter, r *http.Request) {
 				return nil, err
 			}
 			cookie, err := GetAuthCookie(r)
-			if err != nil {
-				return nil, err
-			} else if cookie == nil {
-				return nil, ErrMissingAuthCookie
+			if err != nil || cookie == nil {
+				return proto.Marshal(&StatusResult{IsAuthenticated: false})
 			}
 			result, err := s.Status(r.Context(), &statusParams, cookie.AuthCode)
 			if err != nil {
