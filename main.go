@@ -165,6 +165,27 @@ func (auth *Auth) GetUserStore(username string) (*sidb.Store[*ProtoUser], error)
 	return sidb.MakeStore(db, "user", serialize, deserializeUser, nil, nil), nil
 }
 
+// UserExists checks if a user has actually been created (not just auto-created by GetUserStore)
+func (auth *Auth) UserExists(username string) (bool, error) {
+	// First check if the database file exists at all (without creating it)
+	if !sidb.DatabaseExists([]string{auth.namespace, "users"}, username) {
+		return false, nil
+	}
+
+	// File exists, now check if there's an actual user record
+	store, err := auth.GetUserStore(username)
+	if err != nil {
+		return false, err
+	}
+
+	user, err := store.Get(username)
+	if err != nil {
+		return false, err
+	}
+
+	return user != nil, nil
+}
+
 func validateUsername(username string) bool {
 	// Add your username validation logic here.
 	// For example, check length, allowed characters, etc.

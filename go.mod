@@ -8,7 +8,7 @@ require google.golang.org/protobuf v1.36.10
 
 require (
 	github.com/coreos/go-oidc/v3 v3.17.0
-	github.com/germtb/sidb v0.3.0
+	github.com/germtb/sidb v0.3.1
 	github.com/germtb/silogger v0.0.0-20251130220100-0760b4ec3ba8
 	golang.org/x/crypto v0.43.0
 	golang.org/x/oauth2 v0.32.0
