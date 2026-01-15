@@ -250,11 +250,11 @@ func (s *AuthRpcServer) HandleRpc(w http.ResponseWriter, r *http.Request) {
 			if err := proto.Unmarshal(body, &statusParams); err != nil {
 				return nil, err
 			}
-			cookie, err := GetAuthCookie(r)
-			if err != nil || cookie == nil {
+			authCode, err := GetAuthToken(r)
+			if err != nil {
 				return proto.Marshal(&StatusResult{IsAuthenticated: false})
 			}
-			result, err := s.Status(r.Context(), &statusParams, cookie.AuthCode)
+			result, err := s.Status(r.Context(), &statusParams, authCode)
 			if err != nil {
 				return nil, err
 			}
