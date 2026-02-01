@@ -29,6 +29,7 @@ type User struct {
 type Auth struct {
 	pepper     [32]byte
 	namespace  string
+	root       string
 	userDbs    map[string]*sidb.Database
 	mutex      sync.Mutex
 	tokenStore *sidb.Store[*Token]
@@ -75,13 +76,22 @@ func Init(
 	namespace string,
 	oidcProviders ...*OIDCProvider,
 ) (*Auth, error) {
-	tokenDb, err := sidb.Init([]string{namespace}, "tokens")
+	return InitWithRoot(pepper, namespace, "", oidcProviders...)
+}
+
+func InitWithRoot(
+	pepper [32]byte,
+	namespace string,
+	root string,
+	oidcProviders ...*OIDCProvider,
+) (*Auth, error) {
+	tokenDb, err := sidb.InitWithRoot(root, []string{namespace}, "tokens")
 
 	if err != nil {
 		return nil, err
 	}
 
-	oidcMappingStore, err := MakeOIDCUserMappingStore(namespace)
+	oidcMappingStore, err := MakeOIDCUserMappingStoreWithRoot(namespace, root)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +105,7 @@ func Init(
 	return &Auth{
 		pepper:           pepper,
 		namespace:        namespace,
+		root:             root,
 		userDbs:          map[string]*sidb.Database{},
 		tokenStore:       sidb.MakeStore(tokenDb, "token", serialize, deserializeToken, nil, nil),
 		codeStore:        sidb.MakeStore(tokenDb, "auth_code", serialize, deserializeAuthCode, nil, nil),
@@ -138,7 +149,7 @@ func (auth *Auth) GetUserDatabase(username string) (*sidb.Database, error) {
 		return db, nil
 	}
 
-	db, err := sidb.Init([]string{auth.namespace, "users"}, username)
+	db, err := sidb.InitWithRoot(auth.root, []string{auth.namespace, "users"}, username)
 
 	if err != nil {
 		return nil, err
@@ -168,7 +179,7 @@ func (auth *Auth) GetUserStore(username string) (*sidb.Store[*ProtoUser], error)
 // UserExists checks if a user has actually been created (not just auto-created by GetUserStore)
 func (auth *Auth) UserExists(username string) (bool, error) {
 	// First check if the database file exists at all (without creating it)
-	if !sidb.DatabaseExists([]string{auth.namespace, "users"}, username) {
+	if !sidb.DatabaseExistsWithRoot(auth.root, []string{auth.namespace, "users"}, username) {
 		return false, nil
 	}
 

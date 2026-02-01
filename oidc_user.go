@@ -25,7 +25,11 @@ type OIDCUserMappingStore struct {
 }
 
 func MakeOIDCUserMappingStore(namespace string) (*OIDCUserMappingStore, error) {
-	db, err := sidb.Init([]string{namespace}, "oidc_mappings")
+	return MakeOIDCUserMappingStoreWithRoot(namespace, "")
+}
+
+func MakeOIDCUserMappingStoreWithRoot(namespace string, root string) (*OIDCUserMappingStore, error) {
+	db, err := sidb.InitWithRoot(root, []string{namespace}, "oidc_mappings")
 	if err != nil {
 		return nil, err
 	}

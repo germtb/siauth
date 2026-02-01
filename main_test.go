@@ -13,7 +13,7 @@ func Cleanup(siauth *Auth) {
 	}
 	siauth.tokenStore.DropParentDb()
 	for _, db := range siauth.userDbs {
-		db.DropParentDb()
+		db.Drop()
 	}
 }
 
