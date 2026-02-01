@@ -34,7 +34,16 @@ func MakeOIDCUserMappingStoreWithRoot(namespace string, root string) (*OIDCUserM
 		return nil, err
 	}
 
-	store := sidb.MakeStore(db, "oidc_mapping", serialize, deserializeOIDCMapping, nil, nil)
+	indexExtractors := map[string]sidb.IndexExtractor[*ProtoOIDCUserMapping]{
+		"username": {
+			Extract: func(m *ProtoOIDCUserMapping) interface{} {
+				return m.Username
+			},
+			Type: sidb.StringIndex,
+		},
+	}
+
+	store := sidb.MakeStore(db, "oidc_mapping", serialize, deserializeOIDCMapping, nil, indexExtractors)
 
 	return &OIDCUserMappingStore{
 		store: store,
@@ -76,10 +85,8 @@ func (s *OIDCUserMappingStore) GetUsername(providerName, providerSub string) (st
 
 // GetIdentities retrieves all OIDC identities linked to a local user
 func (s *OIDCUserMappingStore) GetIdentities(username string) ([]*OIDCUserMapping, error) {
-	// Query all mappings - sidb doesn't have reverse lookup, so we scan all
-	// This is acceptable as the number of mappings per user is typically small
 	entries, err := s.store.Query().
-		Limit(1000). // Reasonable upper bound
+		Where("username", sidb.OpEqual, username).
 		Exec()
 
 	if err != nil {
@@ -88,14 +95,12 @@ func (s *OIDCUserMappingStore) GetIdentities(username string) ([]*OIDCUserMappin
 
 	var identities []*OIDCUserMapping
 	for _, entry := range entries {
-		if entry.Username == username {
-			identities = append(identities, &OIDCUserMapping{
-				ProviderName: entry.ProviderName,
-				ProviderSub:  entry.ProviderSub,
-				Username:     entry.Username,
-				CreatedAt:    entry.CreatedAt,
-			})
-		}
+		identities = append(identities, &OIDCUserMapping{
+			ProviderName: entry.ProviderName,
+			ProviderSub:  entry.ProviderSub,
+			Username:     entry.Username,
+			CreatedAt:    entry.CreatedAt,
+		})
 	}
 
 	return identities, nil
