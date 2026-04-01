@@ -120,6 +120,7 @@ message OIDCLoginParams {
   string provider_name = 1;
   string code = 2;
   optional string code_verifier = 3;  // PKCE
+  optional string redirect_uri = 4;   // Override redirect URI (for native apps using custom URL schemes)
 }
 message OIDCLoginResult {
   bool success = 1;

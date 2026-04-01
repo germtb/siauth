@@ -218,7 +218,7 @@ func (server *AuthRpcServer) OIDCLogin(ctx context.Context, req *OIDCLoginParams
 		return &OIDCLoginResult{Success: false}, nil, fmt.Errorf("OIDC provider '%s' not configured", req.ProviderName)
 	}
 
-	token, userInfo, err := server.Auth.LoginWithOIDC(ctx, provider, req.Code, req.CodeVerifier)
+	token, userInfo, err := server.Auth.LoginWithOIDC(ctx, provider, req.Code, req.CodeVerifier, req.RedirectUri)
 	if err != nil {
 		logger.Error("OIDC login failed", "provider", req.ProviderName, "error", err)
 		return &OIDCLoginResult{Success: false}, nil, err

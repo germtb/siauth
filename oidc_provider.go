@@ -214,8 +214,10 @@ func (p *OIDCProvider) GetAuthCodeURL(state string, codeChallenge *string) strin
 	return p.oauth2Config.AuthCodeURL(state, opts...)
 }
 
-// ExchangeCode exchanges authorization code for ID token and user info
-func (p *OIDCProvider) ExchangeCode(ctx context.Context, code string, codeVerifier *string) (*OIDCUserInfo, error) {
+// ExchangeCode exchanges authorization code for ID token and user info.
+// If redirectURI is non-nil, it overrides the provider's configured redirect URI
+// (used by native apps that use a custom URL scheme for the OAuth callback).
+func (p *OIDCProvider) ExchangeCode(ctx context.Context, code string, codeVerifier *string, redirectURI *string) (*OIDCUserInfo, error) {
 	opts := []oauth2.AuthCodeOption{}
 
 	// Add PKCE verifier if provided
@@ -223,8 +225,14 @@ func (p *OIDCProvider) ExchangeCode(ctx context.Context, code string, codeVerifi
 		opts = append(opts, oauth2.SetAuthURLParam("code_verifier", *codeVerifier))
 	}
 
+	// Use the provider's config, optionally overriding the redirect URI
+	config := p.oauth2Config
+	if redirectURI != nil {
+		config.RedirectURL = *redirectURI
+	}
+
 	// Exchange code for OAuth2 token
-	oauth2Token, err := p.oauth2Config.Exchange(ctx, code, opts...)
+	oauth2Token, err := config.Exchange(ctx, code, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code: %w", err)
 	}

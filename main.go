@@ -725,9 +725,9 @@ func (auth *Auth) ExchangeAuthCode(code string, clientID string, redirectURI str
 
 // LoginWithOIDC performs OIDC login and returns a token
 // Creates user on first login (JIT provisioning)
-func (auth *Auth) LoginWithOIDC(ctx context.Context, provider *OIDCProvider, code string, codeVerifier *string) (*Token, *OIDCUserInfo, error) {
+func (auth *Auth) LoginWithOIDC(ctx context.Context, provider *OIDCProvider, code string, codeVerifier *string, redirectURI *string) (*Token, *OIDCUserInfo, error) {
 	// 1. Exchange code for user info
-	userInfo, err := provider.ExchangeCode(ctx, code, codeVerifier)
+	userInfo, err := provider.ExchangeCode(ctx, code, codeVerifier, redirectURI)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to exchange OIDC code: %w", err)
 	}
